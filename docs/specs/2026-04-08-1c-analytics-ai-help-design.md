@@ -75,8 +75,9 @@
 ### Knowledge flow:
 
 1. **Router** (GPU 0) → "knowledge"
-2. **Wiki search** → Wiki.js GraphQL API (pgvector RAG)
-3. **Answer** (GPU 3) → answer from wiki context
+2. **ai-chat** → POST /api/chat to Uniss1/ai-chat service (:3001)
+   ai-chat handles: hybrid search (vector+keyword+trigram) + RAG + LLM
+3. **Return** → answer with sources (title, path)
 
 ## LLM Infrastructure
 
@@ -84,6 +85,7 @@ Principle: orchestrate multiple lightweight model instances instead of one heavy
 
 - 4 Ollama instances, each pinned to one GPU (ports 11434-11437)
 - Same model (Qwen3.5-4B) on all, different system prompts per role
+- GPU 0: router, GPU 1: query gen, GPU 2: formatter, GPU 3: spare (knowledge flow delegated to ai-chat)
 - Parallel execution — router doesn't block formatter
 
 ### Optimizations:
@@ -114,7 +116,7 @@ Three-layer protection:
 
 Included:
 - Data queries to vitrine registers
-- Knowledge base answers from Wiki.js
+- Knowledge base answers via ai-chat (Uniss1/ai-chat)
 - Widget in 1C Analytics
 - Standalone web chat
 - Dashboard context awareness
@@ -134,7 +136,7 @@ Not included:
 | Metadata | SQLite |
 | Chat history | SQLite |
 | 1C access | HTTP service (расширение 1С) |
-| Knowledge base | Wiki.js (existing ai-wiki project) |
+| Knowledge base | ai-chat service (Uniss1/ai-chat, Wiki.js + pgvector + RAG) |
 | Web UI | Vanilla HTML/CSS/JS |
 | Widget | JS, injected via nginx |
 | Reverse proxy | nginx (sub_filter) |

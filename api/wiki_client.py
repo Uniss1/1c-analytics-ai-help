@@ -1,17 +1,42 @@
-"""Wiki.js API client for knowledge base queries."""
+"""ai-chat API client for knowledge base queries.
+
+Uses existing ai-chat service (Uniss1/ai-chat) which provides:
+- Hybrid search (vector + keyword + trigram) over Wiki.js
+- LLM-generated answers via Ollama
+- Source attribution
+
+This module is a thin wrapper — ai-chat handles RAG, LLM and formatting.
+No need for a separate LLM call (GPU 3) for knowledge flow.
+"""
+
+import httpx
+
+from .config import settings
 
 
-async def search_wiki(query: str) -> list[dict]:
-    """Search Wiki.js via GraphQL API with pgvector RAG.
+async def ask_knowledge_base(question: str, history: list[dict] | None = None) -> dict:
+    """Ask ai-chat for an answer from the knowledge base.
 
-    Returns list of relevant article chunks.
+    Args:
+        question: user question in Russian
+        history: optional chat history [{role: "user"/"assistant", content: "..."}]
+
+    Returns:
+        {answer: str, sources: [{title, path}], from_cache: bool}
     """
-    raise NotImplementedError
-
-
-async def answer_from_wiki(question: str, context_chunks: list[dict]) -> str:
-    """Use LLM (GPU 3) to answer based on wiki context.
-
-    Returns natural language answer in Russian.
-    """
-    raise NotImplementedError
+    async with httpx.AsyncClient(timeout=settings.wiki_timeout) as client:
+        response = await client.post(
+            f"{settings.wiki_base_url}/api/chat",
+            json={
+                "message": question,
+                "history": history or [],
+                "mode": "ai",
+            },
+        )
+        response.raise_for_status()
+        data = response.json()
+        return {
+            "answer": data["answer"],
+            "sources": data.get("sources", []),
+            "from_cache": data.get("from_cache", False),
+        }

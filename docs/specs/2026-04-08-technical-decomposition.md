@@ -39,12 +39,12 @@
 │  │              │             │                                   │  │
 │  │              ▼             ▼                                   │  │
 │  │     metadata.py      wiki_client.py                           │  │
-│  │     find_register()  search_wiki()                            │  │
+│  │     find_register()  ask_knowledge_base()                     │  │
 │  │              │             │                                   │  │
 │  │              ▼             ▼                                   │  │
-│  │  query_templates.py  answer_from_wiki()──► LLM (GPU 3)       │  │
-│  │  try_match()              │                                   │  │
-│  │     │     │               ▼                                   │  │
+│  │  query_templates.py  POST ai-chat /api/chat                   │  │
+│  │  try_match()         (RAG + LLM уже внутри)                   │  │
+│  │     │     │               │                                   │  │
 │  │   match  no match    return answer                            │  │
 │  │     │     │                                                   │  │
 │  │     │     ▼                                                   │  │
@@ -70,7 +70,7 @@
 │  │ Ollama   │ │ Ollama   │ │ Ollama   │ │ Ollama   │              │
 │  │ :11434   │ │ :11435   │ │ :11436   │ │ :11437   │              │
 │  │ GPU 0    │ │ GPU 1    │ │ GPU 2    │ │ GPU 3    │              │
-│  │ router   │ │ query    │ │ formatter│ │ wiki     │              │
+│  │ router   │ │ query    │ │ formatter│ │ (spare)  │              │
 │  └──────────┘ └──────────┘ └──────────┘ └──────────┘              │
 │                                                                     │
 │  ┌──────────────────────────────────────┐                          │
@@ -108,9 +108,11 @@
 
 Внешние сервисы:
 ┌─────────────────────────────────────────────────────────────────────┐
-│  Wiki.js (ai-wiki)                                                  │
-│  GraphQL API + pgvector                                             │
-│  ← search_wiki(query) → [{title, content, path}]                   │
+│  ai-chat (Uniss1/ai-chat, :3001)                                    │
+│  FastAPI + Wiki.js PostgreSQL + pgvector + Ollama                   │
+│  Гибридный поиск (вектор + keyword + триграммы) + RAG + LLM        │
+│  ← POST /api/chat {message, history, mode:"ai"}                    │
+│  → {answer, sources: [{title, path}], from_cache}                  │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -534,22 +536,15 @@ knowledge — вопрос про методологию, определения
 ДАННЫЕ: {data}
 ```
 
-### 5.4 Wiki Answerer (GPU 3) — ответ по базе знаний
+### 5.4 Wiki Answerer — НЕ НУЖЕН
 
-```
-Ты отвечаешь на вопросы по внутренней базе знаний компании об аналитике и дашбордах 1С.
+Knowledge flow делегируется сервису ai-chat (Uniss1/ai-chat :3001).
+ai-chat уже содержит: гибридный поиск (вектор + keyword + триграммы),
+RAG, LLM через Ollama, кэширование ответов.
 
-ПРАВИЛА:
-1. Отвечай ТОЛЬКО на основе предоставленного контекста
-2. Если в контексте нет ответа — скажи "Информация не найдена в базе знаний"
-3. Ссылайся на источник: "Согласно статье «Название»..."
-4. Кратко и структурированно — списки, если нужно
-5. Если вопрос частично покрыт контекстом — ответь на покрытую часть и укажи что остальное не найдено
-
-КОНТЕКСТ ИЗ БАЗЫ ЗНАНИЙ:
-{context}
-
-ВОПРОС: {question}
+Наш сервис просто вызывает POST /api/chat и пробрасывает ответ.
+GPU 3 свободен — можно использовать как запасной для data flow
+или для параллельных запросов роутера.
 ```
 
 ---
@@ -615,11 +610,11 @@ knowledge — вопрос про методологию, определения
 
 ФАЗА 2: KNOWLEDGE FLOW                    [ зависит от ФАЗЫ 0 ]
 ═══════════════════════
-Результат: вопрос о методологии → Wiki.js → ответ из базы знаний
+Результат: вопрос о методологии → ai-chat → ответ из базы знаний
 
-  2.1  wiki_client.py — search_wiki() через GraphQL API Wiki.js
-  2.2  wiki_client.py — answer_from_wiki() вызов LLM (GPU 3)
-  2.3  Тест: вопрос "как считается..." → wiki search → LLM → ответ
+  2.1  wiki_client.py — ask_knowledge_base() через POST ai-chat /api/chat
+       ai-chat уже содержит RAG + LLM, GPU 3 не нужен для knowledge flow
+  2.2  Тест: вопрос "как считается..." → ai-chat → ответ с источниками
 
 
 ФАЗА 3: РОУТЕР + CHAT API                 [ зависит от ФАЗ 1, 2 ]

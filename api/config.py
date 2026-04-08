@@ -13,9 +13,9 @@ class Settings(BaseSettings):
     onec_user: str = "ai_assistant"
     onec_password: str = ""
 
-    # Wiki.js
-    wiki_base_url: str = "http://localhost:3000"
-    wiki_api_key: str = ""
+    # ai-chat (knowledge base)
+    wiki_base_url: str = "http://localhost:3001"
+    wiki_timeout: int = 30
 
     # Limits
     query_timeout: int = 30

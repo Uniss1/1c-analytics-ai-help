@@ -65,7 +65,7 @@ class ChatResponse(BaseModel):
     session_id: str
     latency_ms: int
     sources: list[dict] | None = None
-    register: str | None = None
+    register_name: str | None = None
 
 
 @app.get("/health")
@@ -133,7 +133,7 @@ async def chat(req: ChatRequest):
         session_id=session_id,
         latency_ms=latency,
         sources=sources,
-        register=register_name,
+        register_name=register_name,
     )
 
 

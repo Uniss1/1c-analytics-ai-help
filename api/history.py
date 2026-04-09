@@ -111,7 +111,7 @@ def get_recent_messages(session_id: str, limit: int = 4) -> list[dict]:
     rows = conn.execute(
         """SELECT role, content FROM messages
            WHERE session_id = ?
-           ORDER BY created_at DESC LIMIT ?""",
+           ORDER BY id DESC LIMIT ?""",
         (session_id, limit),
     ).fetchall()
     return [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]

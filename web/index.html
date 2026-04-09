@@ -12,10 +12,18 @@
     .msg { margin-bottom: 12px; padding: 12px 16px; border-radius: 12px; max-width: 70%; font-size: 15px; line-height: 1.5; }
     .msg-user { background: #e3f2fd; margin-left: auto; }
     .msg-assistant { background: white; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    .msg-loading { background: white; box-shadow: 0 1px 3px rgba(0,0,0,0.1); color: #888; font-style: italic; }
     #input-area { display: flex; padding: 12px; background: white; border-top: 1px solid #e0e0e0; }
     #input { flex: 1; border: 1px solid #e0e0e0; border-radius: 8px; padding: 12px; font-size: 15px; outline: none; }
     #input:focus { border-color: #1976d2; }
     #send { background: #1976d2; color: white; border: none; border-radius: 8px; padding: 12px 20px; margin-left: 8px; cursor: pointer; font-size: 15px; }
+    #send:disabled { background: #90caf9; cursor: not-allowed; }
+
+    /* Markdown tables */
+    .msg table { border-collapse: collapse; margin: 8px 0; font-size: 14px; width: 100%; }
+    .msg th, .msg td { border: 1px solid #e0e0e0; padding: 6px 10px; text-align: left; }
+    .msg th { background: #f5f5f5; font-weight: 600; }
+    .msg tr:nth-child(even) { background: #fafafa; }
   </style>
 </head>
 <body>
@@ -27,33 +35,117 @@
   </div>
   <script>
     const API = '/assistant/api';
+    let sessionId = localStorage.getItem('ai-help-session-id');
+    let lastIntent = null;
+
+    function getLoadingText() {
+      if (lastIntent === 'data') return 'Ищу в данных...';
+      if (lastIntent === 'knowledge') return 'Ищу в базе знаний...';
+      return 'Думаю...';
+    }
+
+    function renderMarkdown(text) {
+      const lines = text.split('\n');
+      const result = [];
+      let tableRows = [];
+
+      function flushTable() {
+        if (tableRows.length === 0) return;
+        const headers = tableRows[0];
+        const dataRows = tableRows.slice(1);
+        let html = '<table><thead><tr>';
+        headers.forEach(h => { html += '<th>' + escapeHtml(h) + '</th>'; });
+        html += '</tr></thead><tbody>';
+        dataRows.forEach(row => {
+          html += '<tr>';
+          row.forEach(cell => { html += '<td>' + escapeHtml(cell) + '</td>'; });
+          html += '</tr>';
+        });
+        html += '</tbody></table>';
+        result.push(html);
+        tableRows = [];
+      }
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith('|') && trimmed.endsWith('|')) {
+          // Skip separator rows like |---|---|
+          if (/^\|[\s\-:|]+\|$/.test(trimmed)) continue;
+          const cells = trimmed.slice(1, -1).split('|').map(c => c.trim());
+          tableRows.push(cells);
+        } else {
+          flushTable();
+          result.push(escapeHtml(line));
+        }
+      }
+      flushTable();
+      return result.join('<br>');
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
     async function send() {
       const input = document.getElementById('input');
+      const sendBtn = document.getElementById('send');
       const msg = input.value.trim();
       if (!msg) return;
+
       appendMsg('user', msg);
       input.value = '';
+      sendBtn.disabled = true;
+
+      const loadingEl = appendMsg('loading', getLoadingText());
+
       try {
+        const body = { message: msg };
+        if (sessionId) body.session_id = sessionId;
+
         const res = await fetch(API + '/chat', {
           method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({message: msg}),
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
         });
         const data = await res.json();
+
+        // Save session_id
+        if (data.session_id && data.session_id !== sessionId) {
+          sessionId = data.session_id;
+          localStorage.setItem('ai-help-session-id', sessionId);
+        }
+
+        // Remember intent for next loading indicator
+        if (data.intent) lastIntent = data.intent;
+
+        loadingEl.remove();
         appendMsg('assistant', data.answer);
-      } catch(e) {
+      } catch (e) {
+        loadingEl.remove();
         appendMsg('assistant', 'Ошибка соединения');
+      } finally {
+        sendBtn.disabled = false;
+        input.focus();
       }
     }
+
     function appendMsg(role, text) {
       const el = document.createElement('div');
       el.className = 'msg msg-' + role;
-      el.textContent = text;
+      if (role === 'assistant') {
+        el.innerHTML = renderMarkdown(text);
+      } else {
+        el.textContent = text;
+      }
       document.getElementById('messages').appendChild(el);
-      el.scrollIntoView({behavior: 'smooth'});
+      el.scrollIntoView({ behavior: 'smooth' });
+      return el;
     }
+
     document.getElementById('send').addEventListener('click', send);
-    document.getElementById('input').addEventListener('keypress', e => { if(e.key==='Enter') send(); });
+    document.getElementById('input').addEventListener('keypress', e => { if (e.key === 'Enter') send(); });
   </script>
 </body>
 </html>

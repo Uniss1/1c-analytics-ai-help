@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     model_name: str = "qwen3.5:4b"
 
     # 1C HTTP service
-    onec_base_url: str = "http://localhost/api/v1"
+    onec_base_url: str = "http://localhost/base/hs/ai"
     onec_user: str = "ai_assistant"
     onec_password: str = ""
 

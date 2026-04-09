@@ -24,7 +24,7 @@ from .metadata import find_register, get_all_registers, init_metadata
 from .onec_client import execute_query
 from .param_extractor import extract_params
 from .query_builder import build_query
-from .query_validator import validate_query
+from .query_validator import validate_params, validate_query
 from .router import classify_intent
 from .wiki_client import ask_knowledge_base
 
@@ -247,6 +247,7 @@ async def _handle_data(
     # Build and execute query
     return await _execute_query_flow(
         extraction["params"], register_meta, message, debug,
+        session_id=session_id,
     )
 
 
@@ -271,7 +272,7 @@ async def _handle_clarification_response(
 
     if msg_lower in confirms:
         debug["steps"].append({"step": "user_confirmed", "confirmed": True})
-        result = await _execute_query_flow(params, register_meta, message, debug)
+        result = await _execute_query_flow(params, register_meta, message, debug, session_id=session_id)
     else:
         debug["steps"].append({"step": "user_confirmed", "confirmed": False, "correction": message})
         original_desc = ""
@@ -313,6 +314,7 @@ async def _handle_clarification_response(
 
         result = await _execute_query_flow(
             extraction["params"], register_meta, message, debug,
+            session_id=session_id,
         )
 
     latency = int((time.monotonic() - start) * 1000)
@@ -341,9 +343,20 @@ async def _execute_query_flow(
     register_meta: dict,
     message: str,
     debug: dict,
+    session_id: str | None = None,
 ) -> dict:
     """Build query from params, execute in 1C, format response."""
     register_name = register_meta["name"]
+
+    # Validate param values against allowed lists before building query
+    is_valid, val_errors = validate_params(params, register_meta)
+    if val_errors:
+        debug["steps"].append({"step": "param_validation", "errors": val_errors})
+        return {
+            "answer": "Некорректные значения:\n" + "\n".join(f"- {e}" for e in val_errors),
+            "register_name": register_name,
+            "needs_clarification": True,
+        }
 
     # Build deterministic query
     result = build_query(params, register_meta)
@@ -359,9 +372,31 @@ async def _execute_query_flow(
     })
 
     if missing_required:
-        missing_str = ", ".join(missing_required)
+        # Build helpful message with allowed values for each missing dimension
+        dims_by_name = {d["name"]: d for d in register_meta.get("dimensions", [])}
+        lines = ["Не хватает обязательных параметров:"]
+        for dim_name in missing_required:
+            dim = dims_by_name.get(dim_name, {})
+            allowed = dim.get("allowed_values") or []
+            filter_type = dim.get("filter_type", "=")
+            if allowed:
+                lines.append(f"- {dim_name}: выберите из {allowed}")
+            elif filter_type == "year_month":
+                lines.append(f"- {dim_name}: укажите год и месяц (например: март 2025)")
+            elif filter_type == "range":
+                lines.append(f"- {dim_name}: укажите начальную и/или конечную дату")
+            else:
+                lines.append(f"- {dim_name}: укажите значение")
+
+        # Store pending clarification so user can answer
+        if session_id:
+            _pending_clarifications[session_id] = {
+                "params": params,
+                "register_metadata": register_meta,
+            }
+
         return {
-            "answer": f"Не хватает обязательных параметров: {missing_str}",
+            "answer": "\n".join(lines),
             "register_name": register_name,
             "needs_clarification": True,
         }

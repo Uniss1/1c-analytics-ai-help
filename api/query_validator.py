@@ -25,6 +25,28 @@ OBJECT_PATTERN = re.compile(
 )
 
 
+def validate_params(params: dict, register_metadata: dict) -> tuple[bool, list[str]]:
+    """Validate that param values are in allowed lists.
+
+    Returns (is_valid, list of error messages).
+    """
+    errors = []
+    filters = params.get("filters", {})
+    dims_by_name = {d["name"]: d for d in register_metadata.get("dimensions", [])}
+
+    for dim_name, value in filters.items():
+        if value is None:
+            continue
+        dim = dims_by_name.get(dim_name)
+        if not dim:
+            continue
+        allowed = dim.get("allowed_values") or []
+        if allowed and value not in allowed:
+            errors.append(f"{dim_name}: '{value}' не из допустимых {allowed}")
+
+    return len(errors) == 0, errors
+
+
 def validate_query(
     query: str, allowed_registers: set[str]
 ) -> tuple[bool, str, str]:

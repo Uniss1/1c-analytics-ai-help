@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Discover 1C registers via HTTP service and populate metadata.db.
+"""Discover 1C registers and update registers.yaml + metadata.db.
 
-Connects to the 1C HTTP service, probes registers, extracts column names
-and distinct dimension values, then writes everything to metadata.db.
+Reads register names from registers.yaml, probes 1C HTTP service to discover
+actual dimensions/resources, extracts distinct values as keywords,
+writes back to registers.yaml, then seeds metadata.db.
 
 Usage:
     python3 scripts/sync_metadata.py
@@ -16,24 +17,14 @@ import sys
 from pathlib import Path
 
 import httpx
+import yaml
 
-# Add project root to path for config import
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from api.config import settings
 
-DB_PATH = Path(__file__).resolve().parent.parent / "metadata.db"
-
-# --- Registers to probe ---
-# Add your register names here. The script will skip those that don't exist.
-REGISTERS_TO_PROBE = [
-    "РегистрНакопления.ВитринаВыручка",
-    "РегистрНакопления.ВитринаЗатрат",
-    "РегистрНакопления.ВитринаПерсонал",
-    "РегистрНакопления.ВитринаПродажи",
-    "РегистрНакопления.ВитринаПоказатели",
-    "РегистрНакопления.ВитринаСводная",
-    "РегистрНакопления.ВитринаБюджет",
-]
+ROOT = Path(__file__).resolve().parent.parent
+DB_PATH = ROOT / "metadata.db"
+YAML_PATH = ROOT / "registers.yaml"
 
 # Fields that are numeric aggregatable values (resources)
 KNOWN_RESOURCE_NAMES = {
@@ -111,9 +102,9 @@ def classify_fields(sample_row: dict) -> tuple[list[dict], list[dict]]:
     return dimensions, resources
 
 
-def generate_keywords(register_name: str, distinct_values: dict) -> list[str]:
-    """Generate search keywords from register name and dimension values."""
-    keywords = set()
+def generate_keywords(register_name: str, distinct_values: dict, existing_keywords: list[str]) -> list[str]:
+    """Generate search keywords from register name, dimension values, and keep existing."""
+    keywords = set(existing_keywords)
 
     # From register name: ВитринаВыручка → выручка
     short_name = register_name.split(".")[-1]
@@ -123,7 +114,7 @@ def generate_keywords(register_name: str, distinct_values: dict) -> list[str]:
         if kw not in ("витрина", "регистр", "накопления"):
             keywords.add(kw)
 
-    # From distinct values of key fields (Показатель, ДЗО, etc.)
+    # From distinct values of key fields
     for field, values in distinct_values.items():
         for val in values:
             kw = val.strip().lower()
@@ -133,90 +124,48 @@ def generate_keywords(register_name: str, distinct_values: dict) -> list[str]:
     return sorted(keywords)
 
 
-def create_schema(conn: sqlite3.Connection) -> None:
-    conn.executescript("""
-        CREATE TABLE IF NOT EXISTS dashboards (
-            id INTEGER PRIMARY KEY, slug TEXT NOT NULL UNIQUE,
-            title TEXT NOT NULL, url_pattern TEXT NOT NULL,
-            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-        );
-        CREATE TABLE IF NOT EXISTS registers (
-            id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE,
-            description TEXT NOT NULL, register_type TEXT NOT NULL,
-            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-        );
-        CREATE TABLE IF NOT EXISTS dashboard_registers (
-            dashboard_id INTEGER NOT NULL REFERENCES dashboards(id),
-            register_id INTEGER NOT NULL REFERENCES registers(id),
-            widget_title TEXT, PRIMARY KEY (dashboard_id, register_id)
-        );
-        CREATE TABLE IF NOT EXISTS dimensions (
-            id INTEGER PRIMARY KEY, register_id INTEGER NOT NULL REFERENCES registers(id),
-            name TEXT NOT NULL, data_type TEXT NOT NULL, description TEXT
-        );
-        CREATE TABLE IF NOT EXISTS resources (
-            id INTEGER PRIMARY KEY, register_id INTEGER NOT NULL REFERENCES registers(id),
-            name TEXT NOT NULL, data_type TEXT NOT NULL DEFAULT 'Число', description TEXT
-        );
-        CREATE TABLE IF NOT EXISTS keywords (
-            id INTEGER PRIMARY KEY, register_id INTEGER NOT NULL REFERENCES registers(id),
-            keyword TEXT NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS idx_keywords_word ON keywords(keyword);
-        CREATE INDEX IF NOT EXISTS idx_dashboard_slug ON dashboards(slug);
-    """)
+def update_yaml(yaml_data: dict, synced: dict) -> dict:
+    """Update registers in yaml_data with discovered metadata from 1C."""
+    reg_by_name = {r["name"]: r for r in yaml_data.get("registers", [])}
 
+    for reg_name, info in synced.items():
+        if reg_name in reg_by_name:
+            # Update existing register
+            reg = reg_by_name[reg_name]
+            reg["dimensions"] = info["dimensions"]
+            reg["resources"] = info["resources"]
+            reg["keywords"] = info["keywords"]
+        else:
+            # Add new register discovered from 1C
+            yaml_data.setdefault("registers", []).append({
+                "name": reg_name,
+                "description": reg_name.split(".")[-1],
+                "type": "accumulation_turnover",
+                "dimensions": info["dimensions"],
+                "resources": info["resources"],
+                "keywords": info["keywords"],
+            })
 
-def save_register(conn: sqlite3.Connection, register_name: str,
-                  dimensions: list[dict], resources: list[dict],
-                  keywords: list[str]) -> int:
-    """Save register and its metadata, return register_id."""
-    cur = conn.cursor()
-    short_name = register_name.split(".")[-1]
-
-    # Find existing register or insert new
-    row = cur.execute("SELECT id FROM registers WHERE name = ?", (register_name,)).fetchone()
-    if row:
-        reg_id = row[0]
-        cur.execute(
-            "UPDATE registers SET description = ?, register_type = ?, updated_at = datetime('now') WHERE id = ?",
-            (short_name, "accumulation_turnover", reg_id),
-        )
-    else:
-        cur.execute(
-            "INSERT INTO registers (name, description, register_type, updated_at) VALUES (?, ?, ?, datetime('now'))",
-            (register_name, short_name, "accumulation_turnover"),
-        )
-        reg_id = cur.lastrowid
-
-    # Clear old data for this register
-    for table in ("dimensions", "resources", "keywords"):
-        cur.execute(f"DELETE FROM {table} WHERE register_id = ?", (reg_id,))
-
-    for dim in dimensions:
-        cur.execute(
-            "INSERT INTO dimensions (register_id, name, data_type, description) VALUES (?, ?, ?, ?)",
-            (reg_id, dim["name"], dim["data_type"], dim.get("description", "")),
-        )
-    for res in resources:
-        cur.execute(
-            "INSERT INTO resources (register_id, name, data_type, description) VALUES (?, ?, ?, ?)",
-            (reg_id, res["name"], res["data_type"], res.get("description", "")),
-        )
-    for kw in keywords:
-        cur.execute(
-            "INSERT INTO keywords (register_id, keyword) VALUES (?, ?)",
-            (reg_id, kw),
-        )
-
-    conn.commit()
-    return reg_id
+    return yaml_data
 
 
 def main():
     print(f"1C: {settings.onec_base_url}")
     print(f"User: {settings.onec_user}")
-    print(f"DB: {DB_PATH}\n")
+    print(f"DB: {DB_PATH}")
+    print(f"YAML: {YAML_PATH}\n")
+
+    # Load existing YAML
+    if YAML_PATH.exists():
+        with open(YAML_PATH, encoding="utf-8") as f:
+            yaml_data = yaml.safe_load(f) or {}
+    else:
+        yaml_data = {"dashboards": [], "registers": []}
+
+    register_names = [r["name"] for r in yaml_data.get("registers", [])]
+    if not register_names:
+        print("Нет регистров в registers.yaml. Добавьте хотя бы имена регистров.")
+        sys.exit(1)
 
     # Test connection
     print("Подключение к 1С...")
@@ -232,64 +181,69 @@ def main():
 
     # Probe registers
     print("Поиск регистров...")
-    found = {}
-    for name in REGISTERS_TO_PROBE:
+    synced = {}
+    for name in register_names:
         sample = probe_register(name)
-        if sample is not None:
-            found[name] = sample
-            if sample:
-                print(f"  ✓ {name} — {len(sample)} полей")
-
-    if not found:
-        print("\nНе найдено ни одного регистра.")
-        print("Добавьте имена в REGISTERS_TO_PROBE в scripts/sync_metadata.py")
-        sys.exit(1)
-
-    print(f"\nНайдено: {len(found)}\n")
-
-    # Init DB
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute("PRAGMA foreign_keys = ON")
-    create_schema(conn)
-
-    # Process each register
-    for reg_name, sample_row in found.items():
-        print(f"--- {reg_name} ---")
-        if not sample_row:
-            print("  Пустой, пропускаю\n")
+        if sample is None:
+            continue
+        if not sample:
+            print(f"  ⚠ {name}: пустой, пропускаю")
             continue
 
-        dimensions, resources = classify_fields(sample_row)
-        print(f"  Измерения: {[d['name'] for d in dimensions]}")
-        print(f"  Ресурсы:   {[r['name'] for r in resources]}")
+        print(f"  ✓ {name} — {len(sample)} полей")
+        dimensions, resources = classify_fields(sample)
+        print(f"    Измерения: {[d['name'] for d in dimensions]}")
+        print(f"    Ресурсы:   {[r['name'] for r in resources]}")
 
         # Distinct values for keyword-worthy dimensions
         distinct = {}
         for dim in dimensions:
             if dim["name"] in DIMENSION_KEYWORDS_FIELDS:
-                values = get_distinct_values(reg_name, dim["name"])
+                values = get_distinct_values(name, dim["name"])
                 if values:
                     distinct[dim["name"]] = values
                     preview = values[:5]
-                    print(f"  {dim['name']}: {len(values)} шт — {preview}{'...' if len(values) > 5 else ''}")
+                    print(f"    {dim['name']}: {len(values)} шт — {preview}{'...' if len(values) > 5 else ''}")
 
-        keywords = generate_keywords(reg_name, distinct)
-        print(f"  Keywords ({len(keywords)}): {keywords[:10]}{'...' if len(keywords) > 10 else ''}")
+        # Keep existing keywords from YAML
+        existing_reg = next((r for r in yaml_data.get("registers", []) if r["name"] == name), None)
+        existing_kw = existing_reg.get("keywords", []) if existing_reg else []
 
-        reg_id = save_register(conn, reg_name, dimensions, resources, keywords)
-        print(f"  Сохранено (id={reg_id})\n")
+        keywords = generate_keywords(name, distinct, existing_kw)
+        print(f"    Keywords ({len(keywords)}): {keywords[:10]}{'...' if len(keywords) > 10 else ''}")
 
+        synced[name] = {
+            "dimensions": [{"name": d["name"], "data_type": d["data_type"]} for d in dimensions],
+            "resources": [{"name": r["name"]} for r in resources],
+            "keywords": keywords,
+        }
+
+    if not synced:
+        print("\nНе удалось получить данные ни по одному регистру.")
+        sys.exit(1)
+
+    print(f"\nСинхронизировано: {len(synced)}\n")
+
+    # Update YAML
+    yaml_data = update_yaml(yaml_data, synced)
+    with open(YAML_PATH, "w", encoding="utf-8") as f:
+        yaml.dump(yaml_data, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+    print(f"registers.yaml обновлён")
+
+    # Seed metadata.db from updated YAML
+    from scripts.seed_metadata import create_schema, seed_from_yaml
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("PRAGMA foreign_keys = ON")
+    create_schema(cur)
+    seed_from_yaml(cur, yaml_data)
+    conn.commit()
     conn.close()
+    print(f"metadata.db обновлён")
 
-    print("=" * 50)
-    print(f"metadata.db готов: {DB_PATH}")
-    print()
-    print("Проверка:")
+    print("\nГотово. Проверка:")
+    print(f"  cat registers.yaml")
     print(f"  sqlite3 {DB_PATH} 'SELECT name FROM registers'")
-    print(f"  sqlite3 {DB_PATH} 'SELECT r.name, k.keyword FROM keywords k JOIN registers r ON r.id=k.register_id'")
-    print()
-    print("Дашборды нужно добавить вручную (если есть):")
-    print(f"  sqlite3 {DB_PATH} \"INSERT INTO dashboards (slug, title, url_pattern) VALUES ('main', 'Главный', '/analytics/main*')\"")
 
 
 if __name__ == "__main__":

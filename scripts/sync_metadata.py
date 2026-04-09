@@ -39,6 +39,15 @@ SKIP_FIELDS = {"номер_строки", "НомерСтроки", "Регис�
 # Dimension fields worth extracting distinct values for keywords
 DIMENSION_KEYWORDS_FIELDS = {"Показатель", "ДЗО", "Сценарий", "КонтурПоказателя", "ПризнакДоход"}
 
+# Known default values for specific dimensions
+KNOWN_DEFAULTS = {
+    "Сценарий": "Факт",
+    "КонтурПоказателя": "свод",
+}
+
+# Max distinct values to consider a dimension enumerable
+MAX_ENUM_VALUES = 50
+
 
 def query_1c(query_text: str, params: dict | None = None) -> dict:
     """Execute query via 1C HTTP service."""
@@ -79,7 +88,7 @@ def get_distinct_values(register_name: str, field: str, limit: int = 200) -> lis
 
 
 def classify_fields(sample_row: dict) -> tuple[list[dict], list[dict]]:
-    """Classify fields into dimensions and resources based on sample data."""
+    """Classify fields into dimensions and resources based on sample data (simple format)."""
     dimensions = []
     resources = []
 
@@ -98,6 +107,72 @@ def classify_fields(sample_row: dict) -> tuple[list[dict], list[dict]]:
                 resources.append({"name": field_name, "data_type": "Число", "description": ""})
         else:
             dimensions.append({"name": field_name, "data_type": "Строка", "description": ""})
+
+    return dimensions, resources
+
+
+def classify_fields_enriched(
+    sample_row: dict, register_name: str
+) -> tuple[list[dict], list[dict]]:
+    """Classify fields into enriched dimensions and resources.
+
+    Enriched dimensions include: required, default, filter_type, values.
+    For string/enum dimensions, queries 1C for distinct values.
+    """
+    dimensions = []
+    resources = []
+
+    for field_name, value in sample_row.items():
+        if field_name in SKIP_FIELDS:
+            continue
+
+        # Resource: numeric field with known resource name
+        if isinstance(value, (int, float)) and field_name in KNOWN_RESOURCE_NAMES:
+            resources.append({"name": field_name})
+            continue
+
+        # Date field
+        if isinstance(value, str) and "T" in value and len(value) >= 19:
+            dimensions.append({
+                "name": field_name,
+                "data_type": "Дата",
+                "required": True,
+                "default": None,
+                "filter_type": "year_month",
+            })
+            continue
+
+        # Numeric field that looks like a dimension (Месяц, Код, etc.)
+        if isinstance(value, (int, float)) and field_name not in DIMENSION_KEYWORDS_FIELDS:
+            if any(kw in field_name.lower() for kw in ("месяц", "номер", "код")):
+                dimensions.append({
+                    "name": field_name,
+                    "data_type": "Число",
+                    "required": False,
+                    "default": None,
+                    "filter_type": "=",
+                })
+                continue
+            else:
+                # Numeric but not a dimension pattern — treat as resource
+                resources.append({"name": field_name})
+                continue
+
+        # String/enum dimension — query 1C for distinct values
+        distinct_values = get_distinct_values(register_name, field_name, limit=MAX_ENUM_VALUES + 1)
+        is_enum = 0 < len(distinct_values) <= MAX_ENUM_VALUES
+
+        dim = {
+            "name": field_name,
+            "data_type": "Строка",
+            "required": is_enum,
+            "default": KNOWN_DEFAULTS.get(field_name),
+            "filter_type": "=",
+        }
+        if is_enum:
+            dim["values"] = distinct_values
+
+        dimensions.append(dim)
 
     return dimensions, resources
 
@@ -221,19 +296,29 @@ def main():
             continue
 
         print(f"  ✓ {name} — {len(sample)} полей")
-        dimensions, resources = classify_fields(sample)
+        dimensions, resources = classify_fields_enriched(sample, name)
         print(f"    Измерения: {[d['name'] for d in dimensions]}")
         print(f"    Ресурсы:   {[r['name'] for r in resources]}")
 
-        # Distinct values for keyword-worthy dimensions
+        # Print enriched info
+        for dim in dimensions:
+            extras = []
+            if dim.get("required"):
+                extras.append("required")
+            if dim.get("default"):
+                extras.append(f"default={dim['default']}")
+            if dim.get("values"):
+                extras.append(f"{len(dim['values'])} values")
+            if dim.get("filter_type") and dim["filter_type"] != "=":
+                extras.append(f"filter={dim['filter_type']}")
+            if extras:
+                print(f"    {dim['name']}: {', '.join(extras)}")
+
+        # Distinct values for keyword generation (use values already discovered)
         distinct = {}
         for dim in dimensions:
-            if dim["name"] in DIMENSION_KEYWORDS_FIELDS:
-                values = get_distinct_values(name, dim["name"])
-                if values:
-                    distinct[dim["name"]] = values
-                    preview = values[:5]
-                    print(f"    {dim['name']}: {len(values)} шт — {preview}{'...' if len(values) > 5 else ''}")
+            if dim["name"] in DIMENSION_KEYWORDS_FIELDS and dim.get("values"):
+                distinct[dim["name"]] = dim["values"]
 
         # Keep existing keywords from YAML (if any)
         existing_reg = next((r for r in yaml_data.get("registers", []) if isinstance(r, dict) and r.get("name") == name), None)
@@ -242,8 +327,20 @@ def main():
         keywords = generate_keywords(name, distinct, existing_kw)
         print(f"    Keywords ({len(keywords)}): {keywords[:10]}{'...' if len(keywords) > 10 else ''}")
 
+        # Build enriched dimension dicts for YAML
+        enriched_dims = []
+        for d in dimensions:
+            dim_dict = {"name": d["name"], "data_type": d["data_type"]}
+            dim_dict["required"] = d.get("required", False)
+            dim_dict["default"] = d.get("default")
+            if d.get("filter_type") and d["filter_type"] != "=":
+                dim_dict["filter_type"] = d["filter_type"]
+            if d.get("values"):
+                dim_dict["values"] = d["values"]
+            enriched_dims.append(dim_dict)
+
         synced[name] = {
-            "dimensions": [{"name": d["name"], "data_type": d["data_type"]} for d in dimensions],
+            "dimensions": enriched_dims,
             "resources": [{"name": r["name"]} for r in resources],
             "keywords": keywords,
         }

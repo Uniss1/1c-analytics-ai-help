@@ -4,11 +4,36 @@ import asyncio
 import sys
 sys.path.insert(0, ".")
 
+from pathlib import Path
+
 from api.llm_client import generate
 from api.metadata import init_metadata, find_register
 from api.date_parser import parse_period
-from api.query_generator import _SYSTEM_PROMPT, _format_metadata, _parse_llm_response
 from api.query_validator import validate_query
+
+_PROMPT_PATH = Path("prompts/query_generator.txt")
+_SYSTEM_PROMPT = _PROMPT_PATH.read_text(encoding="utf-8")
+
+
+def _format_metadata(register_metadata: dict) -> str:
+    lines = [f"Регистр: {register_metadata['name']}"]
+    if register_metadata.get("description"):
+        lines.append(f"Описание: {register_metadata['description']}")
+    for dim in register_metadata.get("dimensions", []):
+        lines.append(f"Измерение: {dim['name']} ({dim['data_type']})")
+    for res in register_metadata.get("resources", []):
+        lines.append(f"Ресурс: {res['name']} ({res['data_type']})")
+    return "\n".join(lines)
+
+
+def _parse_llm_response(response: str, question: str) -> dict:
+    query = response.strip()
+    if query.startswith("```"):
+        lines = query.split("\n")
+        lines = [l for l in lines if not l.startswith("```")]
+        query = "\n".join(lines).strip()
+    params = parse_period(question) or {}
+    return {"query": query, "params": params}
 
 
 async def main():

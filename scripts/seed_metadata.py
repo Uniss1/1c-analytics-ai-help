@@ -1,9 +1,13 @@
-"""Populate metadata.db with test dashboards, registers, and keywords."""
+"""Populate metadata.db from registers.yaml."""
 
 import sqlite3
 from pathlib import Path
 
-DB_PATH = Path(__file__).resolve().parent.parent / "metadata.db"
+import yaml
+
+ROOT = Path(__file__).resolve().parent.parent
+DB_PATH = ROOT / "metadata.db"
+YAML_PATH = ROOT / "registers.yaml"
 
 
 def create_schema(cur: sqlite3.Cursor) -> None:
@@ -58,87 +62,96 @@ def create_schema(cur: sqlite3.Cursor) -> None:
     """)
 
 
-def seed_data(cur: sqlite3.Cursor) -> None:
-    # --- Dashboards ---
-    cur.executemany(
-        "INSERT OR IGNORE INTO dashboards (id, slug, title, url_pattern) VALUES (?, ?, ?, ?)",
-        [
-            (1, "sales", "Продажи", "/analytics/sales*"),
-            (2, "costs", "Затраты", "/analytics/costs*"),
-        ],
-    )
-
+def seed_from_yaml(cur: sqlite3.Cursor, data: dict) -> None:
     # --- Registers ---
-    cur.executemany(
-        "INSERT OR IGNORE INTO registers (id, name, description, register_type) VALUES (?, ?, ?, ?)",
-        [
-            (1, "РегистрНакопления.ВитринаВыручка",
-             "Выручка по подразделениям и номенклатуре", "accumulation_turnover"),
-            (2, "РегистрНакопления.ВитринаЗатрат",
-             "Затраты по статьям и подразделениям", "accumulation_turnover"),
-            (3, "РегистрНакопления.ВитринаПерсонал",
-             "Численность и ФОТ по подразделениям", "accumulation_turnover"),
-        ],
-    )
+    reg_id_map = {}
+    for reg in data.get("registers", []):
+        # Try update first, insert if not exists
+        row = cur.execute("SELECT id FROM registers WHERE name = ?", (reg["name"],)).fetchone()
+        if row:
+            reg_id = row[0]
+            cur.execute(
+                "UPDATE registers SET description = ?, register_type = ?, updated_at = datetime('now') WHERE id = ?",
+                (reg["description"], reg.get("type", "accumulation_turnover"), reg_id),
+            )
+        else:
+            cur.execute(
+                "INSERT INTO registers (name, description, register_type) VALUES (?, ?, ?)",
+                (reg["name"], reg["description"], reg.get("type", "accumulation_turnover")),
+            )
+            reg_id = cur.lastrowid
+        reg_id_map[reg["name"]] = reg_id
 
-    # --- Dashboard <-> Register links ---
-    cur.executemany(
-        "INSERT OR IGNORE INTO dashboard_registers (dashboard_id, register_id, widget_title) VALUES (?, ?, ?)",
-        [
-            (1, 1, "Выручка по месяцам"),
-            (1, 3, "Численность"),
-            (2, 2, "Затраты по статьям"),
-            (2, 3, "ФОТ по подразделениям"),
-        ],
-    )
+        # Clear old dimensions/resources/keywords for this register
+        cur.execute("DELETE FROM dimensions WHERE register_id = ?", (reg_id,))
+        cur.execute("DELETE FROM resources WHERE register_id = ?", (reg_id,))
+        cur.execute("DELETE FROM keywords WHERE register_id = ?", (reg_id,))
 
-    # --- Dimensions ---
-    cur.executemany(
-        "INSERT OR IGNORE INTO dimensions (register_id, name, data_type, description) VALUES (?, ?, ?, ?)",
-        [
-            (1, "Период", "Дата", "Период оборотов"),
-            (1, "Подразделение", "Справочник.Подразделения", "Подразделение организации"),
-            (1, "Номенклатура", "Справочник.Номенклатура", "Товар или услуга"),
-            (2, "Период", "Дата", "Период оборотов"),
-            (2, "Подразделение", "Справочник.Подразделения", "Подразделение организации"),
-            (2, "СтатьяЗатрат", "Справочник.СтатьиЗатрат", "Статья затрат"),
-            (3, "Период", "Дата", "Период оборотов"),
-            (3, "Подразделение", "Справочник.Подразделения", "Подразделение организации"),
-        ],
-    )
+        for dim in reg.get("dimensions", []):
+            cur.execute(
+                "INSERT INTO dimensions (register_id, name, data_type, description) VALUES (?, ?, ?, ?)",
+                (reg_id, dim["name"], dim["data_type"], dim.get("description")),
+            )
 
-    # --- Resources ---
-    cur.executemany(
-        "INSERT OR IGNORE INTO resources (register_id, name, data_type, description) VALUES (?, ?, ?, ?)",
-        [
-            (1, "Сумма", "Число", "Сумма выручки в рублях"),
-            (1, "Количество", "Число", "Количество единиц"),
-            (2, "Сумма", "Число", "Сумма затрат в рублях"),
-            (3, "Численность", "Число", "Количество сотрудников"),
-            (3, "ФОТ", "Число", "Фонд оплаты труда"),
-        ],
-    )
+        for res in reg.get("resources", []):
+            cur.execute(
+                "INSERT INTO resources (register_id, name, data_type, description) VALUES (?, ?, ?, ?)",
+                (reg_id, res["name"], res.get("data_type", "Число"), res.get("description")),
+            )
 
-    # --- Keywords ---
-    cur.executemany(
-        "INSERT OR IGNORE INTO keywords (register_id, keyword) VALUES (?, ?)",
-        [
-            (1, "выручка"), (1, "продажи"), (1, "доход"), (1, "оборот"), (1, "revenue"),
-            (2, "затраты"), (2, "расходы"), (2, "себестоимость"), (2, "costs"),
-            (3, "персонал"), (3, "сотрудники"), (3, "численность"), (3, "фот"), (3, "зарплата"),
-        ],
-    )
+        for kw in reg.get("keywords", []):
+            cur.execute(
+                "INSERT INTO keywords (register_id, keyword) VALUES (?, ?)",
+                (reg_id, kw),
+            )
+
+    # --- Dashboards ---
+    for dash in data.get("dashboards", []):
+        row = cur.execute("SELECT id FROM dashboards WHERE slug = ?", (dash["slug"],)).fetchone()
+        if row:
+            dash_id = row[0]
+            cur.execute(
+                "UPDATE dashboards SET title = ?, url_pattern = ?, updated_at = datetime('now') WHERE id = ?",
+                (dash["title"], dash["url_pattern"], dash_id),
+            )
+        else:
+            cur.execute(
+                "INSERT INTO dashboards (slug, title, url_pattern) VALUES (?, ?, ?)",
+                (dash["slug"], dash["title"], dash["url_pattern"]),
+            )
+            dash_id = cur.lastrowid
+
+        cur.execute("DELETE FROM dashboard_registers WHERE dashboard_id = ?", (dash_id,))
+        for link in dash.get("registers", []):
+            reg_id = reg_id_map.get(link["name"])
+            if reg_id:
+                cur.execute(
+                    "INSERT INTO dashboard_registers (dashboard_id, register_id, widget_title) VALUES (?, ?, ?)",
+                    (dash_id, reg_id, link.get("widget_title")),
+                )
+            else:
+                print(f"  WARNING: register '{link['name']}' not found, skipping dashboard link")
 
 
 def main() -> None:
+    if not YAML_PATH.exists():
+        print(f"ERROR: {YAML_PATH} not found")
+        return
+
+    with open(YAML_PATH, encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
     cur.execute("PRAGMA foreign_keys = ON")
     create_schema(cur)
-    seed_data(cur)
+    seed_from_yaml(cur, data)
     conn.commit()
     conn.close()
-    print(f"metadata.db seeded at {DB_PATH}")
+
+    reg_count = len(data.get("registers", []))
+    dash_count = len(data.get("dashboards", []))
+    print(f"metadata.db seeded: {reg_count} registers, {dash_count} dashboards → {DB_PATH}")
 
 
 if __name__ == "__main__":

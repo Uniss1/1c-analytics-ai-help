@@ -18,9 +18,12 @@ def db_path():
         cur = conn.cursor()
         cur.execute("PRAGMA foreign_keys = ON")
 
-        from scripts.seed_metadata import create_schema, seed_data
+        import yaml
+        from scripts.seed_metadata import create_schema, seed_from_yaml, YAML_PATH
         create_schema(cur)
-        seed_data(cur)
+        with open(YAML_PATH, encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        seed_from_yaml(cur, data)
         conn.commit()
         conn.close()
 

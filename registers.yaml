@@ -1,0 +1,91 @@
+# Регистры 1С Аналитики
+# Редактируйте этот файл, затем: python3 scripts/seed_metadata.py
+
+dashboards:
+  - slug: sales
+    title: Продажи
+    url_pattern: "/analytics/sales*"
+    registers:
+      - name: РегистрНакопления.ВитринаВыручка
+        widget_title: Выручка по месяцам
+      - name: РегистрНакопления.ВитринаПерсонал
+        widget_title: Численность
+
+  - slug: costs
+    title: Затраты
+    url_pattern: "/analytics/costs*"
+    registers:
+      - name: РегистрНакопления.ВитринаЗатрат
+        widget_title: Затраты по статьям
+      - name: РегистрНакопления.ВитринаПерсонал
+        widget_title: ФОТ по подразделениям
+
+registers:
+  - name: РегистрНакопления.ВитринаВыручка
+    description: Выручка по подразделениям и номенклатуре
+    type: accumulation_turnover
+    dimensions:
+      - name: Период
+        data_type: Дата
+        description: Период оборотов
+      - name: Подразделение
+        data_type: Справочник.Подразделения
+        description: Подразделение организации
+      - name: Номенклатура
+        data_type: Справочник.Номенклатура
+        description: Товар или услуга
+    resources:
+      - name: Сумма
+        description: Сумма выручки в рублях
+      - name: Количество
+        description: Количество единиц
+    keywords:
+      - выручка
+      - продажи
+      - доход
+      - оборот
+      - revenue
+
+  - name: РегистрНакопления.ВитринаЗатрат
+    description: Затраты по статьям и подразделениям
+    type: accumulation_turnover
+    dimensions:
+      - name: Период
+        data_type: Дата
+        description: Период оборотов
+      - name: Подразделение
+        data_type: Справочник.Подразделения
+        description: Подразделение организации
+      - name: СтатьяЗатрат
+        data_type: Справочник.СтатьиЗатрат
+        description: Статья затрат
+    resources:
+      - name: Сумма
+        description: Сумма затрат в рублях
+    keywords:
+      - затраты
+      - расходы
+      - себестоимость
+      - costs
+
+  - name: РегистрНакопления.ВитринаПерсонал
+    description: Численность и ФОТ по подразделениям
+    type: accumulation_turnover
+    dimensions:
+      - name: Период
+        data_type: Дата
+        description: Период оборотов
+      - name: Подразделение
+        data_type: Справочник.Подразделения
+        description: Подразделение организации
+    resources:
+      - name: Численность
+        description: Количество сотрудников
+      - name: ФОТ
+        description: Фонд оплаты труда
+    keywords:
+      - персонал
+      - сотрудники
+      - численность
+      - фот
+      - зарплата

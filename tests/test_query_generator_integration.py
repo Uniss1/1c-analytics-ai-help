@@ -9,15 +9,22 @@ from api.query_generator import generate_query
 
 @pytest.fixture()
 def register_meta():
+    """Register metadata matching real 1C structure."""
     return {
         "name": "РегистрНакопления.ВитринаВыручка",
-        "description": "Выручка по подразделениям и номенклатуре",
+        "description": "ВитринаВыручка",
         "register_type": "accumulation_turnover",
         "dimensions": [
-            {"name": "Подразделение", "data_type": "Справочник.Подразделения"},
+            {"name": "Период_Показателя", "data_type": "Дата"},
+            {"name": "Показатель", "data_type": "Строка"},
+            {"name": "КонтурПоказателя", "data_type": "Строка"},
+            {"name": "ДЗО", "data_type": "Строка"},
+            {"name": "Сценарий", "data_type": "Строка"},
+            {"name": "Месяц", "data_type": "Число"},
         ],
         "resources": [
             {"name": "Сумма", "data_type": "Число"},
+            {"name": "Выручка", "data_type": "Число"},
         ],
     }
 
@@ -30,7 +37,9 @@ async def test_template_path(register_meta):
 
     mock_llm.assert_not_called()
     assert "СУММА(Сумма)" in result["query"]
-    assert "ВитринаВыручка.Обороты" in result["query"]
+    assert "ВитринаВыручка" in result["query"]
+    assert "ГДЕ" in result["query"]
+    assert "Обороты" not in result["query"]
 
 
 @pytest.mark.asyncio
@@ -38,10 +47,13 @@ async def test_llm_path(register_meta):
     """No template match — falls back to LLM, validates result."""
     llm_response = (
         "ВЫБРАТЬ ПЕРВЫЕ 1000\n"
-        "    Сумма КАК Q1,\n"
-        "    Сумма КАК Q2\n"
+        "    Показатель,\n"
+        "    СУММА(Сумма) КАК Значение\n"
         "ИЗ\n"
-        "    РегистрНакопления.ВитринаВыручка.Обороты(&Начало, &Конец,,,)"
+        "    РегистрНакопления.ВитринаВыручка\n"
+        "ГДЕ\n"
+        "    Сценарий = &Сценарий\n"
+        "СГРУППИРОВАТЬ ПО Показатель"
     )
     with patch(
         "api.query_generator.generate",

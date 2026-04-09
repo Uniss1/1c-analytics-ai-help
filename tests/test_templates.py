@@ -11,15 +11,27 @@ from api.date_parser import parse_period
 
 @pytest.fixture()
 def register_meta():
+    """Register metadata matching real 1C structure."""
     return {
         "name": "РегистрНакопления.ВитринаВыручка",
-        "description": "Выручка по подразделениям и номенклатуре",
+        "description": "ВитринаВыручка",
         "register_type": "accumulation_turnover",
         "dimensions": [
-            {"name": "Подразделение", "data_type": "Справочник.Подразделения"},
+            {"name": "Период_Показателя", "data_type": "Дата"},
+            {"name": "Показатель", "data_type": "Строка"},
+            {"name": "Показатель_номер", "data_type": "Строка"},
+            {"name": "КонтурПоказателя", "data_type": "Строка"},
+            {"name": "ПризнакДоход", "data_type": "Строка"},
+            {"name": "ДЗО", "data_type": "Строка"},
+            {"name": "Сценарий", "data_type": "Строка"},
+            {"name": "Масштаб", "data_type": "Строка"},
+            {"name": "Ед_изм", "data_type": "Строка"},
+            {"name": "Месяц", "data_type": "Число"},
         ],
         "resources": [
             {"name": "Сумма", "data_type": "Число"},
+            {"name": "Выручка", "data_type": "Число"},
+            {"name": "ОЗП", "data_type": "Число"},
         ],
     }
 
@@ -27,25 +39,58 @@ def register_meta():
 # --- try_match tests ---
 
 
-def test_sum_for_period(register_meta):
+def test_aggregate_for_period(register_meta):
     result = try_match("выручка за март", register_meta)
     assert result is not None
     assert "СУММА(Сумма)" in result["query"]
-    assert "ВитринаВыручка.Обороты" in result["query"]
+    assert "ВитринаВыручка" in result["query"]
+    assert "ГДЕ" in result["query"]
+    assert "Период_Показателя" in result["query"]
+    # Default filters
+    assert "Сценарий" in result["query"]
+    assert "КонтурПоказателя" in result["query"]
+    # No virtual table
+    assert "Обороты" not in result["query"]
 
 
-def test_sum_by_dimension(register_meta):
-    result = try_match("выручка по подразделениям", register_meta)
+def test_group_by_dzo(register_meta):
+    result = try_match("выручка по ДЗО", register_meta)
     assert result is not None
-    assert "СГРУППИРОВАТЬ ПО Подразделение" in result["query"]
+    assert "СГРУППИРОВАТЬ ПО ДЗО" in result["query"]
     assert "СУММА(Сумма)" in result["query"]
 
 
+def test_group_by_organizations(register_meta):
+    result = try_match("выручка по организациям", register_meta)
+    assert result is not None
+    assert "СГРУППИРОВАТЬ ПО ДЗО" in result["query"]
+
+
 def test_top_n(register_meta):
-    result = try_match("топ-5 по продажам", register_meta)
+    result = try_match("топ-5 по показателям", register_meta)
     assert result is not None
     assert "ПЕРВЫЕ 5" in result["query"]
     assert "УБЫВ" in result["query"]
+
+
+def test_time_series(register_meta):
+    result = try_match("динамика по месяцам", register_meta)
+    assert result is not None
+    assert "СГРУППИРОВАТЬ ПО Месяц" in result["query"]
+    assert "УПОРЯДОЧИТЬ ПО Месяц" in result["query"]
+
+
+def test_scenario_default_fact(register_meta):
+    result = try_match("выручка за март", register_meta)
+    assert result is not None
+    assert result["params"].get("Сценарий") == "Факт"
+    assert result["params"].get("Контур") == "свод"
+
+
+def test_scenario_prognoz(register_meta):
+    result = try_match("прогноз выручки за март", register_meta)
+    assert result is not None
+    assert result["params"].get("Сценарий") == "Прогноз"
 
 
 def test_no_match(register_meta):

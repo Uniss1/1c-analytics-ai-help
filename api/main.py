@@ -22,7 +22,9 @@ from .history import (
 )
 from .metadata import find_register, get_all_registers, init_metadata
 from .onec_client import execute_query
-from .query_generator import generate_query
+from .param_extractor import extract_params
+from .query_builder import build_query
+from .query_validator import validate_query
 from .router import classify_intent
 from .wiki_client import ask_knowledge_base
 
@@ -31,6 +33,9 @@ logger = logging.getLogger(__name__)
 DB_DIR = Path(__file__).parent.parent
 METADATA_DB = str(DB_DIR / "metadata.db")
 HISTORY_DB = str(DB_DIR / "history.db")
+
+# In-memory store for pending clarifications: session_id → {params, register_metadata}
+_pending_clarifications: dict[str, dict] = {}
 
 
 @asynccontextmanager
@@ -66,6 +71,7 @@ class ChatResponse(BaseModel):
     latency_ms: int
     sources: list[dict] | None = None
     register_name: str | None = None
+    needs_clarification: bool = False
 
 
 @app.get("/health")
@@ -83,9 +89,14 @@ async def chat(req: ChatRequest):
     # Dashboard slug for cache/metadata
     dashboard_slug = None
     if req.dashboard_context and req.dashboard_context.get("url"):
-        # Extract slug from URL like /analytics/sales → sales
         parts = req.dashboard_context["url"].rstrip("/").split("/")
         dashboard_slug = parts[-1] if parts else None
+
+    # Check if this is a clarification response
+    if session_id in _pending_clarifications:
+        return await _handle_clarification_response(
+            req.message, session_id, dashboard_slug, start,
+        )
 
     # Cache check
     cached = check_cache(req.message, dashboard_slug)
@@ -108,11 +119,16 @@ async def chat(req: ChatRequest):
     register_name = None
     query_text = None
     sources = None
+    needs_clarification = False
 
     if intent == "data":
-        answer, register_name, query_text = await _handle_data(
-            req.message, req.dashboard_context, dashboard_slug,
+        result = await _handle_data(
+            req.message, req.dashboard_context, dashboard_slug, session_id,
         )
+        answer = result["answer"]
+        register_name = result.get("register_name")
+        query_text = result.get("query_text")
+        needs_clarification = result.get("needs_clarification", False)
     else:
         answer, sources = await _handle_knowledge(req.message, session_id)
 
@@ -124,8 +140,9 @@ async def chat(req: ChatRequest):
                  intent=intent, register=register_name,
                  query_text=query_text, latency_ms=latency)
 
-    # Save cache
-    save_cache(req.message, answer, intent, dashboard_slug)
+    # Save cache (only for complete answers, not clarifications)
+    if not needs_clarification:
+        save_cache(req.message, answer, intent, dashboard_slug)
 
     return ChatResponse(
         answer=answer,
@@ -134,6 +151,7 @@ async def chat(req: ChatRequest):
         latency_ms=latency,
         sources=sources,
         register_name=register_name,
+        needs_clarification=needs_clarification,
     )
 
 
@@ -141,42 +159,165 @@ async def _handle_data(
     message: str,
     dashboard_context: dict | None,
     dashboard_slug: str | None,
-) -> tuple[str, str | None, str | None]:
-    """Data flow: metadata → query → 1C → format."""
+    session_id: str,
+) -> dict:
+    """Data flow: metadata → extract params → clarify or execute."""
     # Find register
     register_meta = find_register(message, dashboard_context)
     if not register_meta:
-        return "Не удалось определить подходящий регистр для вашего вопроса.", None, None
+        return {"answer": "Не удалось определить подходящий регистр для вашего вопроса."}
 
     register_name = register_meta["name"]
 
-    # Generate query
-    try:
-        result = await generate_query(message, register_meta, dashboard_context)
-    except ValueError as e:
-        return f"Ошибка генерации запроса: {e}", register_name, None
+    # Extract structured params via LLM
+    extraction = await extract_params(message, register_meta)
 
+    if extraction["needs_clarification"]:
+        # Store pending state for this session
+        _pending_clarifications[session_id] = {
+            "params": extraction["params"],
+            "register_metadata": register_meta,
+        }
+        return {
+            "answer": extraction["clarification_text"],
+            "register_name": register_name,
+            "needs_clarification": True,
+        }
+
+    # Build and execute query
+    return await _execute_query_flow(
+        extraction["params"], register_meta, message,
+    )
+
+
+async def _handle_clarification_response(
+    message: str,
+    session_id: str,
+    dashboard_slug: str | None,
+    start: float,
+) -> ChatResponse:
+    """Handle user's response to a clarification question."""
+    pending = _pending_clarifications.pop(session_id)
+    params = pending["params"]
+    register_meta = pending["register_metadata"]
+    register_name = register_meta["name"]
+
+    # Check if user confirms (да, ок, верно, подтверждаю, etc.)
+    msg_lower = message.strip().lower()
+    confirms = {"да", "ок", "верно", "подтверждаю", "правильно", "точно", "ага", "угу", "yes", "ok"}
+
+    if msg_lower in confirms:
+        # User confirmed — execute with current params
+        result = await _execute_query_flow(params, register_meta, message)
+    else:
+        # User provided corrections — re-extract with combined context
+        original_desc = ""
+        if params and params.get("understood", {}).get("описание"):
+            original_desc = params["understood"]["описание"]
+
+        combined = f"Исходный вопрос: {original_desc}. Уточнение пользователя: {message}"
+        extraction = await extract_params(combined, register_meta)
+
+        if extraction["needs_clarification"]:
+            # Still need clarification — store again
+            _pending_clarifications[session_id] = {
+                "params": extraction["params"],
+                "register_metadata": register_meta,
+            }
+            latency = int((time.monotonic() - start) * 1000)
+            save_message(session_id, "user", message)
+            save_message(session_id, "assistant", extraction["clarification_text"],
+                         intent="data", register=register_name, latency_ms=latency)
+            return ChatResponse(
+                answer=extraction["clarification_text"],
+                intent="data",
+                session_id=session_id,
+                latency_ms=latency,
+                register_name=register_name,
+                needs_clarification=True,
+            )
+
+        result = await _execute_query_flow(
+            extraction["params"], register_meta, message,
+        )
+
+    latency = int((time.monotonic() - start) * 1000)
+    answer = result["answer"]
+    query_text = result.get("query_text")
+
+    save_message(session_id, "user", message)
+    save_message(session_id, "assistant", answer,
+                 intent="data", register=register_name,
+                 query_text=query_text, latency_ms=latency)
+    save_cache(message, answer, "data", dashboard_slug)
+
+    return ChatResponse(
+        answer=answer,
+        intent="data",
+        session_id=session_id,
+        latency_ms=latency,
+        register_name=register_name,
+    )
+
+
+async def _execute_query_flow(
+    params: dict,
+    register_meta: dict,
+    message: str,
+) -> dict:
+    """Build query from params, execute in 1C, format response."""
+    register_name = register_meta["name"]
+
+    # Build deterministic query
+    result = build_query(params, register_meta)
     query_text = result["query"]
-    params = result["params"]
+    query_params = result["params"]
+
+    # Validate as safety net
+    allowed = {register_name}
+    is_valid, error, sanitized = validate_query(query_text, allowed)
+    if not is_valid:
+        return {
+            "answer": f"Ошибка построения запроса: {error}",
+            "register_name": register_name,
+            "query_text": query_text,
+        }
+    query_text = sanitized
 
     # Execute in 1C
     try:
-        onec_result = await execute_query(query_text, params)
+        onec_result = await execute_query(query_text, query_params)
     except Exception as e:
         logger.error("1C query failed: %s", e)
-        return f"Ошибка выполнения запроса к 1С: {e}", register_name, query_text
+        return {
+            "answer": f"Ошибка выполнения запроса к 1С: {e}",
+            "register_name": register_name,
+            "query_text": query_text,
+        }
 
     if not onec_result.get("success"):
         error = onec_result.get("error", "Неизвестная ошибка")
-        return f"1С вернула ошибку: {error}", register_name, query_text
+        return {
+            "answer": f"1С вернула ошибку: {error}",
+            "register_name": register_name,
+            "query_text": query_text,
+        }
 
     data = onec_result.get("data", [])
     if not data:
-        return "Данные за указанный период не найдены.", register_name, query_text
+        return {
+            "answer": "Данные за указанный период не найдены.",
+            "register_name": register_name,
+            "query_text": query_text,
+        }
 
     # Format response
     answer = await format_response(message, data, register_name)
-    return answer, register_name, query_text
+    return {
+        "answer": answer,
+        "register_name": register_name,
+        "query_text": query_text,
+    }
 
 
 async def _handle_knowledge(

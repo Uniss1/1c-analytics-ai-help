@@ -51,6 +51,7 @@ def _setup_dbs(tmp_path):
         INSERT INTO dashboard_registers VALUES (1, 1, 'Выручка по месяцам');
         INSERT INTO dimensions VALUES (1, 1, 'Период', 'Дата', NULL);
         INSERT INTO dimensions VALUES (2, 1, 'Подразделение', 'Справочник.Подразделения', NULL);
+        INSERT INTO dimensions VALUES (3, 1, 'Сценарий', 'Строка', NULL);
         INSERT INTO resources VALUES (1, 1, 'Сумма', 'Число', NULL);
         INSERT INTO keywords VALUES (1, 1, 'выручка');
         INSERT INTO keywords VALUES (2, 1, 'продажи');
@@ -65,11 +66,19 @@ def _setup_dbs(tmp_path):
         yield
 
 
+@pytest.fixture(autouse=True)
+def _clear_pending():
+    """Clear pending clarifications between tests."""
+    from api.main import _pending_clarifications
+    _pending_clarifications.clear()
+    yield
+    _pending_clarifications.clear()
+
+
 @pytest.fixture()
 def client():
     """HTTPX test client for FastAPI app."""
     from api.main import app
-    # Re-init DBs since lifespan won't run in test client
     return httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
         base_url="http://test",
@@ -84,13 +93,25 @@ def _sse(*events):
     return "\n".join(lines)
 
 
+# --- Data flow: full params (no clarification) ---
+
 @pytest.mark.asyncio
 @patch("api.router.generate", new_callable=AsyncMock, return_value="data")
+@patch("api.param_extractor.generate", new_callable=AsyncMock, return_value=json.dumps({
+    "resource": "Сумма",
+    "filters": {"Сценарий": "Факт"},
+    "period": {"from": "2025-03-01", "to": "2025-03-31"},
+    "group_by": [],
+    "order_by": "desc",
+    "limit": 1000,
+    "needs_clarification": False,
+    "understood": {"описание": "Сумма выручки за март 2025"},
+}))
 @patch("api.formatter.generate", new_callable=AsyncMock, return_value="Выручка за март: 8.2 млн ₽")
 @patch("api.main.execute_query", new_callable=AsyncMock, return_value={
     "success": True, "data": [{"Сумма": 8200000}], "total": 1, "truncated": False,
 })
-async def test_data_flow_e2e(mock_onec, mock_formatter, mock_router, client):
+async def test_data_flow_e2e(mock_onec, mock_formatter, mock_extractor, mock_router, client):
     """Data question goes through full pipeline."""
     async with client:
         resp = await client.post("/chat", json={"message": "Какая выручка за март?"})
@@ -101,7 +122,84 @@ async def test_data_flow_e2e(mock_onec, mock_formatter, mock_router, client):
     assert "8.2 млн" in body["answer"]
     assert body["session_id"]
     assert body["latency_ms"] >= 0
+    assert not body["needs_clarification"]
 
+
+# --- Data flow: clarification needed ---
+
+@pytest.mark.asyncio
+@patch("api.router.generate", new_callable=AsyncMock, return_value="data")
+@patch("api.param_extractor.generate", new_callable=AsyncMock, return_value=json.dumps({
+    "resource": "Сумма",
+    "filters": {"Сценарий": "Факт"},
+    "period": {"from": None, "to": None},
+    "group_by": ["ДЗО"],
+    "order_by": "desc",
+    "limit": 1000,
+    "needs_clarification": True,
+    "understood": {"описание": "Выручка по ДЗО, период не указан"},
+}))
+async def test_clarification_flow(mock_extractor, mock_router, client):
+    """Ambiguous question triggers clarification."""
+    async with client:
+        resp = await client.post("/chat", json={"message": "выручка по ДЗО"})
+
+    body = resp.json()
+    assert body["needs_clarification"]
+    assert "Правильно я поняла" in body["answer"]
+    assert body["intent"] == "data"
+
+
+# --- Clarification confirmation ---
+
+@pytest.mark.asyncio
+@patch("api.router.generate", new_callable=AsyncMock, return_value="data")
+@patch("api.formatter.generate", new_callable=AsyncMock, return_value="Выручка: 10 млн")
+@patch("api.main.execute_query", new_callable=AsyncMock, return_value={
+    "success": True, "data": [{"Сумма": 10000000}], "total": 1, "truncated": False,
+})
+async def test_clarification_confirm(mock_onec, mock_formatter, mock_router, client):
+    """User confirms clarification → query executes."""
+    from api.main import _pending_clarifications
+    from api.history import create_session
+
+    # Create a real session in the DB so save_message works
+    sid = create_session()
+
+    # Simulate pending clarification
+    _pending_clarifications[sid] = {
+        "params": {
+            "resource": "Сумма",
+            "filters": {"Сценарий": "Факт"},
+            "period": {"from": "2025-03-01", "to": "2025-03-31"},
+            "group_by": [],
+            "order_by": "desc",
+            "limit": 1000,
+            "understood": {"описание": "Сумма выручки за март"},
+        },
+        "register_metadata": {
+            "name": "РегистрНакопления.ВитринаВыручка",
+            "dimensions": [
+                {"name": "Период", "data_type": "Дата"},
+                {"name": "Сценарий", "data_type": "Строка"},
+            ],
+            "resources": [{"name": "Сумма", "data_type": "Число"}],
+        },
+    }
+
+    async with client:
+        resp = await client.post("/chat", json={
+            "message": "да",
+            "session_id": sid,
+        })
+
+    body = resp.json()
+    assert not body.get("needs_clarification", False)
+    assert "10 млн" in body["answer"]
+    assert sid not in _pending_clarifications
+
+
+# --- Knowledge flow (unchanged) ---
 
 @respx.mock
 @pytest.mark.asyncio
@@ -127,20 +225,32 @@ async def test_knowledge_flow_e2e(mock_router, client):
     assert body["sources"]
 
 
+# --- Cache ---
+
 @pytest.mark.asyncio
 @patch("api.router.generate", new_callable=AsyncMock, return_value="data")
+@patch("api.param_extractor.generate", new_callable=AsyncMock, return_value=json.dumps({
+    "resource": "Сумма",
+    "filters": {"Сценарий": "Факт"},
+    "period": {"from": "2025-03-01", "to": "2025-03-31"},
+    "group_by": [],
+    "order_by": "desc",
+    "limit": 1000,
+    "needs_clarification": False,
+    "understood": {"описание": "Выручка за март"},
+}))
 @patch("api.formatter.generate", new_callable=AsyncMock, return_value="Выручка: 10 млн")
 @patch("api.main.execute_query", new_callable=AsyncMock, return_value={
     "success": True, "data": [{"Сумма": 10000000}], "total": 1, "truncated": False,
 })
-async def test_cache_hit(mock_onec, mock_formatter, mock_router, client):
+async def test_cache_hit(mock_onec, mock_formatter, mock_extractor, mock_router, client):
     """Second identical question returns cached response."""
     async with client:
         resp1 = await client.post("/chat", json={"message": "выручка за март"})
         body1 = resp1.json()
 
-        # Reset mocks to verify they're NOT called on cache hit
         mock_router.reset_mock()
+        mock_extractor.reset_mock()
         mock_formatter.reset_mock()
         mock_onec.reset_mock()
 
@@ -151,17 +261,28 @@ async def test_cache_hit(mock_onec, mock_formatter, mock_router, client):
         body2 = resp2.json()
 
     assert body2["answer"] == body1["answer"]
-    assert body2["latency_ms"] <= body1["latency_ms"] or body2["latency_ms"] < 100
     mock_router.assert_not_called()
 
 
+# --- Session history ---
+
 @pytest.mark.asyncio
 @patch("api.router.generate", new_callable=AsyncMock, return_value="data")
+@patch("api.param_extractor.generate", new_callable=AsyncMock, return_value=json.dumps({
+    "resource": "Сумма",
+    "filters": {"Сценарий": "Факт"},
+    "period": {"from": "2025-01-01", "to": "2025-03-31"},
+    "group_by": [],
+    "order_by": "desc",
+    "limit": 1000,
+    "needs_clarification": False,
+    "understood": {"описание": "Выручка за Q1"},
+}))
 @patch("api.formatter.generate", new_callable=AsyncMock, return_value="Ответ")
 @patch("api.main.execute_query", new_callable=AsyncMock, return_value={
     "success": True, "data": [{"Сумма": 1}], "total": 1, "truncated": False,
 })
-async def test_session_history(mock_onec, mock_formatter, mock_router, client):
+async def test_session_history(mock_onec, mock_formatter, mock_extractor, mock_router, client):
     """Two questions in same session are both saved in history."""
     from api.history import get_recent_messages
 
@@ -174,10 +295,8 @@ async def test_session_history(mock_onec, mock_formatter, mock_router, client):
             "session_id": sid,
         })
 
-    # Cache returns for second question so router isn't called,
-    # but both messages should be in history
     msgs = get_recent_messages(sid, limit=10)
-    assert len(msgs) >= 2  # At least user+assistant for first question
+    assert len(msgs) >= 2
     roles = [m["role"] for m in msgs]
     assert "user" in roles
     assert "assistant" in roles

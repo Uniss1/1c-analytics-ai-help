@@ -25,9 +25,10 @@ async def generate(role: str, system_prompt: str, user_message: str) -> str:
         "system": system_prompt,
         "prompt": user_message,
         "stream": False,
+        "think": False,
     }
 
-    async with httpx.AsyncClient(timeout=300) as client:
+    async with httpx.AsyncClient(timeout=120) as client:
         for attempt in range(1, MAX_RETRIES + 1):
             response = await client.post(f"{url}/api/generate", json=payload)
             response.raise_for_status()

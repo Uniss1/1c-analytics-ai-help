@@ -77,12 +77,13 @@ async def main():
     print(f"\n=== Сырой HTTP ответ ===")
     import httpx as _httpx
     url = config.settings.gpu_url("query")
-    async with _httpx.AsyncClient(timeout=300) as client:
+    async with _httpx.AsyncClient(timeout=120) as client:
         raw = await client.post(f"{url}/api/generate", json={
             "model": config.settings.model_name,
             "system": prompt,
             "prompt": question,
             "stream": False,
+            "think": False,
         })
         data = raw.json()
         print(f"done_reason: {data.get('done_reason')}")

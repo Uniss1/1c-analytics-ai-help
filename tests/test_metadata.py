@@ -11,19 +11,47 @@ from api.metadata import init_metadata, find_register, get_all_registers, get_da
 
 @pytest.fixture()
 def db_path():
-    """Create a temp metadata.db with test data."""
+    """Create a temp metadata.db with inline test data (not from YAML)."""
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "metadata.db"
         conn = sqlite3.connect(path)
         cur = conn.cursor()
         cur.execute("PRAGMA foreign_keys = ON")
 
-        import yaml
-        from scripts.seed_metadata import create_schema, seed_from_yaml, YAML_PATH
+        from scripts.seed_metadata import create_schema
         create_schema(cur)
-        with open(YAML_PATH, encoding="utf-8") as f:
-            data = yaml.safe_load(f)
-        seed_from_yaml(cur, data)
+
+        # Inline test data
+        cur.executescript("""
+            INSERT INTO dashboards (id, slug, title, url_pattern) VALUES (1, 'sales', 'Продажи', '/analytics/sales*');
+            INSERT INTO dashboards (id, slug, title, url_pattern) VALUES (2, 'costs', 'Затраты', '/analytics/costs*');
+
+            INSERT INTO registers (id, name, description, register_type) VALUES (1, 'РегистрНакопления.ВитринаВыручка', 'Выручка', 'accumulation_turnover');
+            INSERT INTO registers (id, name, description, register_type) VALUES (2, 'РегистрНакопления.ВитринаЗатрат', 'Затраты', 'accumulation_turnover');
+            INSERT INTO registers (id, name, description, register_type) VALUES (3, 'РегистрНакопления.ВитринаПерсонал', 'Персонал', 'accumulation_turnover');
+
+            INSERT INTO dashboard_registers (dashboard_id, register_id, widget_title) VALUES (1, 1, 'Выручка');
+            INSERT INTO dashboard_registers (dashboard_id, register_id, widget_title) VALUES (1, 3, 'Численность');
+            INSERT INTO dashboard_registers (dashboard_id, register_id, widget_title) VALUES (2, 2, 'Затраты');
+            INSERT INTO dashboard_registers (dashboard_id, register_id, widget_title) VALUES (2, 3, 'ФОТ');
+
+            INSERT INTO dimensions (register_id, name, data_type) VALUES (1, 'Период', 'Дата');
+            INSERT INTO dimensions (register_id, name, data_type) VALUES (1, 'Подразделение', 'Строка');
+            INSERT INTO resources (register_id, name, data_type) VALUES (1, 'Сумма', 'Число');
+
+            INSERT INTO dimensions (register_id, name, data_type) VALUES (2, 'Период', 'Дата');
+            INSERT INTO resources (register_id, name, data_type) VALUES (2, 'Сумма', 'Число');
+
+            INSERT INTO dimensions (register_id, name, data_type) VALUES (3, 'Период', 'Дата');
+            INSERT INTO resources (register_id, name, data_type) VALUES (3, 'Численность', 'Число');
+
+            INSERT INTO keywords (register_id, keyword) VALUES (1, 'выручка');
+            INSERT INTO keywords (register_id, keyword) VALUES (1, 'продажи');
+            INSERT INTO keywords (register_id, keyword) VALUES (2, 'затраты');
+            INSERT INTO keywords (register_id, keyword) VALUES (2, 'расходы');
+            INSERT INTO keywords (register_id, keyword) VALUES (3, 'персонал');
+            INSERT INTO keywords (register_id, keyword) VALUES (3, 'численность');
+        """)
         conn.commit()
         conn.close()
 

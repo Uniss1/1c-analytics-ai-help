@@ -65,7 +65,12 @@ def create_schema(cur: sqlite3.Cursor) -> None:
 def seed_from_yaml(cur: sqlite3.Cursor, data: dict) -> None:
     # --- Registers ---
     reg_id_map = {}
-    for reg in data.get("registers", []):
+    for item in data.get("registers", []):
+        # Support both simple string and full dict format
+        if isinstance(item, str):
+            reg = {"name": item, "description": item.split(".")[-1], "type": "accumulation_turnover"}
+        else:
+            reg = item
         # Try update first, insert if not exists
         row = cur.execute("SELECT id FROM registers WHERE name = ?", (reg["name"],)).fetchone()
         if row:
@@ -99,7 +104,14 @@ def seed_from_yaml(cur: sqlite3.Cursor, data: dict) -> None:
                 (reg_id, res["name"], res.get("data_type", "Число"), res.get("description")),
             )
 
-        for kw in reg.get("keywords", []):
+        keywords = reg.get("keywords", [])
+        # Auto-generate keywords from register name if none provided
+        if not keywords:
+            import re
+            short = reg["name"].split(".")[-1]
+            parts = re.findall(r"[А-ЯЁ][а-яё]+", short)
+            keywords = [p.lower() for p in parts if p.lower() not in ("витрина", "регистр", "накопления")]
+        for kw in keywords:
             cur.execute(
                 "INSERT INTO keywords (register_id, keyword) VALUES (?, ?)",
                 (reg_id, kw),

@@ -149,6 +149,36 @@ def update_yaml(yaml_data: dict, synced: dict) -> dict:
     return yaml_data
 
 
+def normalize_yaml(yaml_data: dict) -> tuple[dict, list[str]]:
+    """Normalize registers list: support both simple strings and full dicts.
+
+    Simple format:   registers: ["РегистрНакопления.Foo", "РегистрНакопления.Bar"]
+    Full format:     registers: [{name: "...", dimensions: [...], ...}]
+
+    Returns (normalized_yaml_data, register_names).
+    """
+    raw = yaml_data.get("registers", [])
+    if not raw:
+        return yaml_data, []
+
+    names = []
+    normalized = []
+    for item in raw:
+        if isinstance(item, str):
+            names.append(item)
+            normalized.append({
+                "name": item,
+                "description": item.split(".")[-1],
+                "type": "accumulation_turnover",
+            })
+        elif isinstance(item, dict):
+            names.append(item["name"])
+            normalized.append(item)
+
+    yaml_data["registers"] = normalized
+    return yaml_data, names
+
+
 def main():
     print(f"1C: {settings.onec_base_url}")
     print(f"User: {settings.onec_user}")
@@ -162,7 +192,7 @@ def main():
     else:
         yaml_data = {"dashboards": [], "registers": []}
 
-    register_names = [r["name"] for r in yaml_data.get("registers", [])]
+    yaml_data, register_names = normalize_yaml(yaml_data)
     if not register_names:
         print("Нет регистров в registers.yaml. Добавьте хотя бы имена регистров.")
         sys.exit(1)
@@ -205,8 +235,8 @@ def main():
                     preview = values[:5]
                     print(f"    {dim['name']}: {len(values)} шт — {preview}{'...' if len(values) > 5 else ''}")
 
-        # Keep existing keywords from YAML
-        existing_reg = next((r for r in yaml_data.get("registers", []) if r["name"] == name), None)
+        # Keep existing keywords from YAML (if any)
+        existing_reg = next((r for r in yaml_data.get("registers", []) if isinstance(r, dict) and r.get("name") == name), None)
         existing_kw = existing_reg.get("keywords", []) if existing_reg else []
 
         keywords = generate_keywords(name, distinct, existing_kw)

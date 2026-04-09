@@ -74,7 +74,24 @@ async def main():
     print(f"\n=== Промпт для LLM ===")
     print(prompt)
 
-    print(f"\n=== Сырой ответ LLM ===")
+    print(f"\n=== Сырой HTTP ответ ===")
+    import httpx as _httpx
+    url = config.settings.gpu_url("query")
+    async with _httpx.AsyncClient(timeout=60) as client:
+        raw = await client.post(f"{url}/api/generate", json={
+            "model": config.settings.model_name,
+            "system": prompt,
+            "prompt": question,
+            "stream": False,
+        })
+        data = raw.json()
+        print(f"done_reason: {data.get('done_reason')}")
+        print(f"response length: {len(data.get('response', ''))}")
+        print(f"response: {repr(data.get('response', '')[:500])}")
+
+    print(f"\n=== Через llm_client.generate (с retry) ===")
+    import logging
+    logging.basicConfig(level=logging.WARNING)
     response = await llm_client.generate(
         role="query", system_prompt=prompt, user_message=question
     )

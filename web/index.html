@@ -614,7 +614,8 @@
   </main>
 
   <script>
-    const API = '/assistant/api';
+    // Auto-detect API base: /assistant/api through nginx, or root when running directly
+    const API = window.location.pathname.startsWith('/assistant/') ? '/assistant/api' : '';
     let sessionId = localStorage.getItem('ai-help-session-id');
     let lastIntent = null;
     let awaitingClarification = false;

@@ -174,12 +174,20 @@ def save_register(conn: sqlite3.Connection, register_name: str,
     cur = conn.cursor()
     short_name = register_name.split(".")[-1]
 
-    cur.execute(
-        """INSERT OR REPLACE INTO registers (name, description, register_type, updated_at)
-           VALUES (?, ?, ?, datetime('now'))""",
-        (register_name, short_name, "accumulation_turnover"),
-    )
-    reg_id = cur.lastrowid
+    # Find existing register or insert new
+    row = cur.execute("SELECT id FROM registers WHERE name = ?", (register_name,)).fetchone()
+    if row:
+        reg_id = row[0]
+        cur.execute(
+            "UPDATE registers SET description = ?, register_type = ?, updated_at = datetime('now') WHERE id = ?",
+            (short_name, "accumulation_turnover", reg_id),
+        )
+    else:
+        cur.execute(
+            "INSERT INTO registers (name, description, register_type, updated_at) VALUES (?, ?, ?, datetime('now'))",
+            (register_name, short_name, "accumulation_turnover"),
+        )
+        reg_id = cur.lastrowid
 
     # Clear old data for this register
     for table in ("dimensions", "resources", "keywords"):

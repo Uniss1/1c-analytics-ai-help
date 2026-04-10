@@ -239,7 +239,140 @@ def build_tools(register_metadata: dict) -> list[dict]:
         },
     }
 
-    return [tool_aggregate, tool_group_by, tool_top_n, tool_time_series]
+    # --- Metric enum for ratio tool ---
+    metric_dim = next(
+        (d for d in register_metadata.get("dimensions", [])
+         if d["name"] == "Показатель"),
+        None,
+    )
+    metric_values = (
+        [str(v) for v in metric_dim.get("allowed_values", [])]
+        if metric_dim and metric_dim.get("allowed_values")
+        else []
+    )
+
+    # Tool 5: compare
+    compare_props = {
+        **base_props,
+        "compare_by": {
+            "type": "string",
+            "enum": groupable,
+            "description": (
+                "Dimension to compare across. "
+                "Use for: 'факт vs план' → scenario, "
+                "'ДЗО-1 vs ДЗО-2' → company"
+            ),
+        },
+        "values": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": (
+                "Exactly 2 values to compare. "
+                "E.g. ['Факт', 'План'] or ['ДЗО-1', 'ДЗО-2']"
+            ),
+        },
+    }
+    tool_compare = {
+        "type": "function",
+        "function": {
+            "name": "compare",
+            "description": (
+                "Compare two values of the same dimension side by side. "
+                "Use for: 'факт vs план', 'сравни', 'разница между', "
+                "'план и факт', 'бюджет vs прогноз'"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": compare_props,
+                "required": base_required + ["compare_by", "values"],
+            },
+        },
+    }
+
+    # Tool 6: ratio
+    ratio_props = {**base_props}
+    if metric_values:
+        ratio_props["numerator"] = {
+            "type": "string",
+            "enum": metric_values,
+            "description": "Metric for numerator (top of fraction). E.g. 'Маржа'",
+        }
+        ratio_props["denominator"] = {
+            "type": "string",
+            "enum": metric_values,
+            "description": "Metric for denominator (bottom of fraction). E.g. 'Выручка'",
+        }
+    else:
+        ratio_props["numerator"] = {
+            "type": "string",
+            "description": "Metric for numerator (top of fraction)",
+        }
+        ratio_props["denominator"] = {
+            "type": "string",
+            "description": "Metric for denominator (bottom of fraction)",
+        }
+    tool_ratio = {
+        "type": "function",
+        "function": {
+            "name": "ratio",
+            "description": (
+                "Calculate ratio of two metrics (numerator / denominator). "
+                "Use for: 'рентабельность', 'доля', 'отношение', "
+                "'маржа к выручке', 'процент от'"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": ratio_props,
+                "required": base_required + ["numerator", "denominator"],
+            },
+        },
+    }
+
+    # Tool 7: filtered
+    filtered_props = {
+        **base_props,
+        "group_by": {
+            "type": "string",
+            "enum": groupable,
+            "description": "Dimension to group by before applying filter condition",
+        },
+        "condition_operator": {
+            "type": "string",
+            "enum": [">", "<", ">=", "<=", "="],
+            "description": (
+                "Comparison operator for the aggregate value. "
+                "'больше' → '>', 'меньше' → '<', 'не менее' → '>=', "
+                "'не более' → '<=', 'равно' → '='"
+            ),
+        },
+        "condition_value": {
+            "type": "number",
+            "description": (
+                "Threshold number. Convert text to number: "
+                "'100 млн' → 100000000, '1.5 млрд' → 1500000000, "
+                "'50 тыс' → 50000"
+            ),
+        },
+    }
+    tool_filtered = {
+        "type": "function",
+        "function": {
+            "name": "filtered",
+            "description": (
+                "Filter grouped results by aggregate value (HAVING clause). "
+                "Use for: 'где выручка больше 100 млн', 'с суммой менее', "
+                "'превышает', 'ниже порога'"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": filtered_props,
+                "required": base_required + ["group_by", "condition_operator", "condition_value"],
+            },
+        },
+    }
+
+    return [tool_aggregate, tool_group_by, tool_top_n, tool_time_series,
+            tool_compare, tool_ratio, tool_filtered]
 
 
 def build_system_message(register_metadata: dict) -> str:

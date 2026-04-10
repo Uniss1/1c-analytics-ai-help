@@ -253,7 +253,7 @@ async def run_calibration(model: str, base_url: str, api_key: str, verbose: bool
 def main():
     parser = argparse.ArgumentParser(description="Calibrate Gemma 4 E2B tool calling")
     parser.add_argument("--model", default="gemma4:e2b", help="Model name")
-    parser.add_argument("--url", default="http://localhost:3000", help="Open WebUI base URL")
+    parser.add_argument("--url", default="http://localhost:11434", help="Ollama or OpenAI-compatible base URL")
     parser.add_argument("--api-key", default="", help="API key for Open WebUI")
     parser.add_argument("-v", "--verbose", action="store_true", help="Show tool definitions and raw responses")
     args = parser.parse_args()

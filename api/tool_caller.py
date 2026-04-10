@@ -43,7 +43,7 @@ async def call_with_tools(
             "raw_response": dict | str,
         }
     """
-    url = base_url or settings.openai_base_url or "http://localhost:3000"
+    url = base_url or settings.openai_base_url or settings.ollama_base_url or "http://localhost:11434"
     key = api_key or settings.openai_api_key or ""
     tools = build_tools(register_metadata)
     system_msg = build_system_message(register_metadata)
@@ -70,7 +70,7 @@ async def call_with_tools(
         for attempt in range(1, MAX_RETRIES + 1):
             try:
                 response = await client.post(
-                    f"{url.rstrip('/')}/api/chat/completions",
+                    f"{url.rstrip('/')}/v1/chat/completions",
                     json=payload,
                     headers=headers,
                 )

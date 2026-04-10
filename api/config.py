@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     wiki_base_url: str = "http://localhost:3001"
     wiki_timeout: int = 120
 
+    # OpenAI-compatible API (Open WebUI)
+    openai_base_url: str = "http://localhost:3000"
+    openai_api_key: str = ""
+
     # Limits
     query_timeout: int = 30
     query_row_limit: int = 1000

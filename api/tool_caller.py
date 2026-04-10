@@ -126,11 +126,18 @@ def _parse_response(data: dict, register_metadata: dict) -> dict:
     if not tool_calls:
         content = message.get("content", "")
         logger.warning("No tool_calls in response. Content: %s", content[:300])
-        return {
-            "tool": None,
-            "error": f"Model responded with text instead of tool call: {content[:300]}",
-            "raw_response": data,
-        }
+
+        # Fallback: some models return tool calls as JSON in content field
+        parsed_from_content = _try_parse_content_as_tool_call(content)
+        if parsed_from_content:
+            logger.info("Parsed tool call from content fallback: %s", parsed_from_content.get("name"))
+            tool_calls = [{"function": parsed_from_content}]
+        else:
+            return {
+                "tool": None,
+                "error": f"Model responded with text instead of tool call: {content[:300]}",
+                "raw_response": data,
+            }
 
     # Take the first tool call
     tc = tool_calls[0]
@@ -149,6 +156,23 @@ def _parse_response(data: dict, register_metadata: dict) -> dict:
                 "raw_response": data,
             }
 
+    # Filter out invalid tool names (e.g. Qwen returns "function_response")
+    if tool_name not in VALID_TOOLS:
+        logger.warning("Invalid tool name '%s', trying to parse from arguments", tool_name)
+        # Some models wrap real tool call inside arguments
+        if isinstance(arguments, dict):
+            inner_name = arguments.get("name", arguments.get("tool", ""))
+            if inner_name in VALID_TOOLS:
+                tool_name = inner_name
+                arguments = arguments.get("arguments", arguments.get("parameters",
+                    {k: v for k, v in arguments.items() if k not in ("name", "tool")}))
+            else:
+                return {
+                    "tool": None,
+                    "error": f"Неизвестный инструмент: {func.get('name', '')}",
+                    "raw_response": data,
+                }
+
     # Normalize to 1C HTTP service format
     params = _normalize_params(tool_name, arguments, register_metadata)
 
@@ -158,6 +182,48 @@ def _parse_response(data: dict, register_metadata: dict) -> dict:
         "params": params,
         "raw_response": data,
     }
+
+
+VALID_TOOLS = {"aggregate", "group_by", "top_n", "time_series", "compare", "ratio", "filtered"}
+
+
+def _try_parse_content_as_tool_call(content: str) -> dict | None:
+    """Try to extract a tool call from model's text content (fallback for models
+    that don't use tool_calls field properly, e.g. Qwen returning function_response)."""
+    if not content:
+        return None
+    try:
+        # Try parsing entire content as JSON
+        data = json.loads(content)
+        if isinstance(data, dict):
+            # Format: {"name": "aggregate", "arguments": {...}}
+            name = data.get("name", "")
+            if name in VALID_TOOLS:
+                return {"name": name, "arguments": data.get("arguments", data.get("parameters", {}))}
+            # Format: {"tool": "aggregate", ...params}
+            tool = data.get("tool", "")
+            if tool in VALID_TOOLS:
+                args = {k: v for k, v in data.items() if k != "tool"}
+                return {"name": tool, "arguments": args}
+    except (json.JSONDecodeError, TypeError):
+        pass
+
+    # Try finding JSON block in content
+    import re
+    json_match = re.search(r'\{[^{}]*"(?:name|tool)"[^{}]*\}', content)
+    if json_match:
+        try:
+            data = json.loads(json_match.group())
+            name = data.get("name", data.get("tool", ""))
+            if name in VALID_TOOLS:
+                args = data.get("arguments", data.get("parameters", {}))
+                if not isinstance(args, dict):
+                    args = {k: v for k, v in data.items() if k not in ("name", "tool")}
+                return {"name": name, "arguments": args}
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    return None
 
 
 def _normalize_params(tool_name: str, args: dict, register_metadata: dict) -> dict:

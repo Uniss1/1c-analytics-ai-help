@@ -84,7 +84,28 @@ async def call_with_tools(
                 return {"tool": None, "error": str(e), "raw_response": ""}
 
             data = response.json()
-            return _parse_response(data, register_metadata)
+            parsed = _parse_response(data, register_metadata)
+
+            # If model returned a valid tool call, we're done
+            if parsed.get("tool") is not None and "error" not in parsed:
+                return parsed
+
+            # No tool call — retry with reinforcement message
+            if attempt < MAX_RETRIES:
+                logger.warning(
+                    "No tool call on attempt %d, retrying with reinforcement", attempt
+                )
+                payload["messages"].append({
+                    "role": "assistant",
+                    "content": parsed.get("error", ""),
+                })
+                payload["messages"].append({
+                    "role": "user",
+                    "content": "You MUST call one of the provided tools. Do NOT respond with text. Call a tool now.",
+                })
+                continue
+
+            return parsed
 
     return {"tool": None, "error": "Max retries exceeded", "raw_response": ""}
 
@@ -158,7 +179,11 @@ def _normalize_params(tool_name: str, args: dict, register_metadata: dict) -> di
         period = {"year": year, "month": month}
 
     # Convert Latin filter keys → 1C dimension names
-    skip_keys = {"resource", "year", "month", "group_by", "order", "order_by", "limit"}
+    skip_keys = {
+        "resource", "year", "month", "group_by", "order", "order_by", "limit",
+        "compare_by", "values", "numerator", "denominator",
+        "condition_operator", "condition_value",
+    }
     filters = {}
     for k, v in args.items():
         if k in skip_keys or v is None:
@@ -183,6 +208,18 @@ def _normalize_params(tool_name: str, args: dict, register_metadata: dict) -> di
     if tool_name == "top_n":
         limit = limit if limit != 1000 else 10
 
+    # Tool-specific params for new tools
+    extra = {}
+    if tool_name == "compare":
+        extra["compare_by"] = key_to_dim(args.get("compare_by", ""))
+        extra["values"] = args.get("values", [])
+    elif tool_name == "ratio":
+        extra["numerator"] = args.get("numerator", "")
+        extra["denominator"] = args.get("denominator", "")
+    elif tool_name == "filtered":
+        extra["condition_operator"] = args.get("condition_operator", ">")
+        extra["condition_value"] = args.get("condition_value", 0)
+
     # Determine needs_clarification
     needs_clarification = False
     missing = []
@@ -197,13 +234,16 @@ def _normalize_params(tool_name: str, args: dict, register_metadata: dict) -> di
             if not period.get("year"):
                 missing.append(name)
         elif ft == "=":
+            # For compare tool, the compare_by dimension is covered by values
+            if tool_name == "compare" and name == extra.get("compare_by"):
+                continue
             if name not in filters and name not in group_by:
                 missing.append(name)
 
     if missing:
         needs_clarification = True
 
-    return {
+    result = {
         "resource": resource,
         "filters": filters,
         "period": period,
@@ -215,3 +255,5 @@ def _normalize_params(tool_name: str, args: dict, register_metadata: dict) -> di
             "описание": f"tool={tool_name}, resource={resource}",
         },
     }
+    result.update(extra)
+    return result

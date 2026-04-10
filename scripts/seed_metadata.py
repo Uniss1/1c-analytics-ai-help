@@ -13,6 +13,13 @@ YAML_PATH = ROOT / "registers.yaml"
 
 def create_schema(cur: sqlite3.Cursor) -> None:
     cur.executescript("""
+        DROP TABLE IF EXISTS keywords;
+        DROP TABLE IF EXISTS resources;
+        DROP TABLE IF EXISTS dimensions;
+        DROP TABLE IF EXISTS dashboard_registers;
+        DROP TABLE IF EXISTS registers;
+        DROP TABLE IF EXISTS dashboards;
+
         CREATE TABLE IF NOT EXISTS dashboards (
             id          INTEGER PRIMARY KEY,
             slug        TEXT NOT NULL UNIQUE,

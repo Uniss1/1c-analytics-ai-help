@@ -1,12 +1,60 @@
 """Generate 1C query language from user question + metadata."""
 
 import json
+import re
 from pathlib import Path
 
 from .query_templates import try_match
-from .query_validator import validate_query
 from .llm_client import generate
 from .date_parser import parse_period
+
+# --- Inline query validation (was query_validator.py) ---
+
+_FORBIDDEN_PATTERN = re.compile(
+    r"\b(ПОМЕСТИТЬ|УНИЧТОЖИТЬ|УДАЛИТЬ|ИЗМЕНИТЬ|СОЗДАТЬ|ОБНОВИТЬ|ПЕРЕСЕКЕМ)\b",
+    re.IGNORECASE,
+)
+
+_REGISTER_PATTERN = re.compile(
+    r"РегистрНакопления\.(\w+?)(?:\.|$)",
+)
+
+_OBJECT_PATTERN = re.compile(
+    r"(Справочник|Документ|ПланСчетов|ПланВидовХарактеристик)\.\w+",
+)
+
+
+def _validate_query(
+    query: str, allowed_registers: set[str]
+) -> tuple[bool, str, str]:
+    """Validate query against whitelist and safety rules.
+
+    Returns: (is_valid, error_message, sanitized_query)
+    """
+    stripped = query.strip()
+
+    match = _FORBIDDEN_PATTERN.search(stripped)
+    if match:
+        return False, f"Запрещено: {match.group()}", ""
+
+    if not stripped.upper().startswith("ВЫБРАТЬ"):
+        return False, "Запрос должен начинаться с ВЫБРАТЬ", ""
+
+    found_registers = _REGISTER_PATTERN.findall(stripped)
+    for reg_name in found_registers:
+        full_name = f"РегистрНакопления.{reg_name}"
+        if full_name not in allowed_registers:
+            return False, f"Регистр не из разрешенного списка: {full_name}", ""
+
+    found_objects = _OBJECT_PATTERN.findall(stripped)
+    if found_objects:
+        return False, f"Запрещены ссылки на объекты: {', '.join(found_objects)}", ""
+
+    sanitized = stripped
+    if "ПЕРВЫЕ" not in sanitized.upper():
+        sanitized = sanitized.replace("ВЫБРАТЬ", "ВЫБРАТЬ ПЕРВЫЕ 1000", 1)
+
+    return True, "", sanitized
 
 _PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "query_generator.txt"
 _SYSTEM_PROMPT = _PROMPT_PATH.read_text(encoding="utf-8")
@@ -65,7 +113,7 @@ async def generate_query(
 
     # 3. Validate
     allowed = {register_metadata["name"]}
-    is_valid, error, sanitized = validate_query(result["query"], allowed)
+    is_valid, error, sanitized = _validate_query(result["query"], allowed)
     if not is_valid:
         raise ValueError(f"LLM сгенерировал невалидный запрос: {error}")
 

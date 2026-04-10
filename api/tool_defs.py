@@ -44,7 +44,7 @@ def _filter_properties(register_metadata: dict) -> tuple[dict, list[str]]:
         props[key] = prop
 
         # Don't mark as JSON Schema required — let the model fill what it can.
-        # Actual required validation happens in _normalize_params / query_builder.
+        # Actual required validation happens in _normalize_params / param_validator.
 
     return props, required
 

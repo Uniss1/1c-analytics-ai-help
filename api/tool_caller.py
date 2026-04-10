@@ -1,7 +1,7 @@
 """Gemma 4 E2B tool calling via OpenAI-compatible API (Open WebUI / Ollama).
 
 Sends user question with tool definitions, parses tool_calls response.
-Returns structured params compatible with query_builder.build_query().
+Returns structured params compatible with param_validator + 1C HTTP service.
 """
 
 import json
@@ -33,7 +33,7 @@ async def call_with_tools(
         {
             "tool": str — selected tool name (aggregate/group_by/top_n/time_series),
             "args": dict — tool arguments filled by model,
-            "params": dict — normalized params for query_builder,
+            "params": dict — normalized params for 1C HTTP service,
             "raw_response": dict — full API response for debugging,
         }
         Or on failure:
@@ -149,7 +149,7 @@ def _parse_response(data: dict, register_metadata: dict) -> dict:
                 "raw_response": data,
             }
 
-    # Normalize to query_builder format
+    # Normalize to 1C HTTP service format
     params = _normalize_params(tool_name, arguments, register_metadata)
 
     return {
@@ -161,10 +161,10 @@ def _parse_response(data: dict, register_metadata: dict) -> dict:
 
 
 def _normalize_params(tool_name: str, args: dict, register_metadata: dict) -> dict:
-    """Convert tool call arguments to query_builder.build_query() format.
+    """Convert tool call arguments to 1C HTTP service.build_query() format.
 
     Tool args use Latin keys (metric, scenario, company, year, month).
-    query_builder expects 1C names (Показатель, Сценарий, ДЗО) + period dict.
+    1C HTTP service expects 1C names (Показатель, Сценарий, ДЗО) + period dict.
     """
     resource = args.get("resource", "Сумма")
     year = args.get("year")

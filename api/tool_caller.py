@@ -80,6 +80,11 @@ async def call_with_tools(
                 return {"tool": None, "error": str(e), "raw_response": ""}
 
             data = response.json()
+            # Log raw response for debugging
+            msg = data.get("message", {})
+            logger.info("OLLAMA raw: tool_calls=%s, content=%s",
+                        msg.get("tool_calls", "NONE"),
+                        (msg.get("content", "") or "")[:200])
             parsed = _parse_ollama_response(data, register_metadata)
 
             if parsed.get("tool") is not None and "error" not in parsed:

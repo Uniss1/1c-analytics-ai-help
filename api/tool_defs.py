@@ -26,6 +26,10 @@ def _filter_properties(register_metadata: dict) -> tuple[dict, list[str]]:
         if filter_type in ("year_month", "range"):
             continue
 
+        # Skip technical dimensions that users don't query by
+        if name in ("Показатель_номер", "Ед_изм", "Масштаб", "Месяц"):
+            continue
+
         key = _dim_key(name)
         allowed = dim.get("allowed_values", [])
         default = dim.get("default_value")
@@ -58,6 +62,10 @@ def _dim_key(name: str) -> str:
         "ДЗО": "company",
         "Масштаб": "scale",
         "Подразделение": "department",
+        "ПризнакДоход": "income_flag",
+        "Ед_изм": "unit",
+        "Месяц": "period_month",
+        "Показатель_номер": "metric_number",
     }
     return mapping.get(name, name)
 
@@ -69,6 +77,10 @@ _KEY_TO_DIM: dict[str, str] = {
     "metric": "Показатель",
     "company": "ДЗО",
     "scale": "Масштаб",
+    "income_flag": "ПризнакДоход",
+    "unit": "Ед_изм",
+    "period_month": "Месяц",
+    "metric_number": "Показатель_номер",
     "department": "Подразделение",
 }
 
@@ -86,7 +98,7 @@ def _resource_enum(register_metadata: dict) -> list[str]:
 def _groupable_dimensions(register_metadata: dict) -> list[str]:
     """Latin keys for dimensions that can be used for GROUP BY."""
     skip_types = ("Дата",)
-    skip_names = ("Масштаб", "Ед_изм", "Показатель_номер")
+    skip_names = ("Масштаб", "Ед_изм", "Показатель_номер", "Месяц", "ПризнакДоход")
     return [
         _dim_key(d["name"])
         for d in register_metadata.get("dimensions", [])

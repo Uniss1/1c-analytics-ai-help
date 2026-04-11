@@ -48,6 +48,65 @@ KNOWN_DEFAULTS = {
 # Max distinct values to consider a dimension enumerable
 MAX_ENUM_VALUES = 50
 
+# Suggested English descriptions for known dimension fields.
+# Used as defaults in the interactive interview.
+_SUGGESTED_DESCRIPTIONS: dict[str, str] = {
+    "Сценарий": "scenario type (Факт, План, Прогноз)",
+    "КонтурПоказателя": "data contour / aggregation level",
+    "Показатель": "metric name (Выручка, Маржа, EBITDA)",
+    "ДЗО": "company / subsidiary (ДЗО, организация)",
+    "Подразделение": "department / business unit",
+    "Масштаб": "display scale (тыс., млн.)",
+    "Ед_изм": "unit of measure",
+    "Показатель_номер": "metric sort order number",
+    "Месяц": "month number",
+    "ПризнакДоход": "income/expense flag",
+}
+
+
+def suggest_description(field_name: str, values: list[str] | None = None) -> str:
+    """Suggest an English description for a dimension field."""
+    if field_name in _SUGGESTED_DESCRIPTIONS:
+        return _SUGGESTED_DESCRIPTIONS[field_name]
+    # Unknown field: generate from name + sample values
+    vals_str = f" ({', '.join(values[:5])})" if values else ""
+    return f"{field_name}{vals_str}"
+
+
+def interview_dimension(dim: dict) -> dict:
+    """Interactive interview for one dimension field.
+
+    Shows field info and asks operator 1-3 questions.
+    Returns dict with keys: technical, role (optional), description_en (optional).
+    """
+    name = dim["name"]
+    dtype = dim.get("data_type", "?")
+    values = dim.get("values", [])
+    values_str = f", значения: {', '.join(str(v) for v in values[:10])}" if values else ""
+
+    print(f'\nПоле "{name}" ({dtype}{values_str})')
+
+    # Question 1: Technical?
+    answer = input("  Техническое поле? (скрыть от модели) [y/n]: ").strip().lower()
+    if answer in ("y", "yes", "д", "да"):
+        return {"technical": True}
+
+    # Question 2: Role
+    print(f'  Роль поля "{name}":')
+    print("    f — только фильтр (WHERE)")
+    print("    g — только группировка (GROUP BY)")
+    print("    b — и фильтр, и группировка")
+    role_input = input("  [f/g/b]: ").strip().lower()
+    role_map = {"f": "filter", "g": "group_by", "b": "both"}
+    role = role_map.get(role_input, "filter")
+
+    # Question 3: English description
+    suggestion = suggest_description(name, values)
+    desc_input = input(f'  Описание (EN): "{suggestion}"\n  [Enter — принять / текст — заменить]: ').strip()
+    description_en = desc_input if desc_input else suggestion
+
+    return {"technical": False, "role": role, "description_en": description_en}
+
 
 def query_1c(query_text: str, params: dict | None = None) -> dict:
     """Execute query via 1C HTTP service."""
@@ -314,6 +373,46 @@ def main():
             if extras:
                 print(f"    {dim['name']}: {', '.join(extras)}")
 
+        # Look up existing register config from YAML (for interview skip logic)
+        existing_reg = next((r for r in yaml_data.get("registers", []) if isinstance(r, dict) and r.get("name") == name), None)
+
+        # Interactive interview: ask operator about each dimension
+        print(f"\n  --- Интервью по измерениям {name} ---")
+        for dim in dimensions:
+            # Skip date dimensions — always handled by year/month
+            if dim.get("filter_type") == "year_month":
+                print(f'  [auto] "{dim["name"]}" — дата, пропускаю')
+                continue
+
+            # Check if YAML already has annotations for this field
+            existing_dim = None
+            if existing_reg:
+                existing_dim = next(
+                    (d for d in existing_reg.get("dimensions", [])
+                     if isinstance(d, dict) and d.get("name") == dim["name"]),
+                    None,
+                )
+
+            if existing_dim and "technical" in existing_dim:
+                # Already annotated — show and skip
+                tech = existing_dim.get("technical", False)
+                role = existing_dim.get("role", "filter")
+                desc = existing_dim.get("description_en", "")
+                status = "техн." if tech else f"role={role}"
+                print(f'  [yaml] "{dim["name"]}" — {status}, "{desc}"')
+                dim["technical"] = tech
+                if not tech:
+                    dim["role"] = role
+                    dim["description_en"] = desc
+                continue
+
+            # Interview this dimension
+            annotations = interview_dimension(dim)
+            dim["technical"] = annotations.get("technical", False)
+            if not dim["technical"]:
+                dim["role"] = annotations.get("role", "filter")
+                dim["description_en"] = annotations.get("description_en")
+
         # Distinct values for keyword generation (use values already discovered)
         distinct = {}
         for dim in dimensions:
@@ -337,6 +436,13 @@ def main():
                 dim_dict["filter_type"] = d["filter_type"]
             if d.get("values"):
                 dim_dict["values"] = d["values"]
+            # New annotation fields
+            if "technical" in d:
+                dim_dict["technical"] = d["technical"]
+            if d.get("role"):
+                dim_dict["role"] = d["role"]
+            if d.get("description_en"):
+                dim_dict["description_en"] = d["description_en"]
             enriched_dims.append(dim_dict)
 
         synced[name] = {

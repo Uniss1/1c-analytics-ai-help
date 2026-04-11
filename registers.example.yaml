@@ -19,24 +19,36 @@ registers:
         required: true
         default: "Факт"
         values: ["Факт", "Прогноз", "План"]
+        technical: false
+        role: both
+        description_en: "scenario type (Факт, План, Прогноз)"
 
       - name: КонтурПоказателя
         data_type: Строка
         required: true
         default: "свод"
         values: ["свод", "детализация"]
+        technical: false
+        role: filter
+        description_en: "data contour / aggregation level"
 
       - name: Показатель
         data_type: Строка
         required: true
         default: null
         values: ["Выручка", "ОЗП", "Маржа", "EBITDA"]
+        technical: false
+        role: both
+        description_en: "metric name (Выручка, Маржа, EBITDA)"
 
       - name: ДЗО
         data_type: Строка
         required: true
         default: null
         values: ["Консолидация", "ДЗО-1", "ДЗО-2"]
+        technical: false
+        role: both
+        description_en: "company / subsidiary (ДЗО, организация)"
 
       - name: Период_Показателя
         data_type: Дата
@@ -48,6 +60,7 @@ registers:
         data_type: Строка
         required: false
         values: ["тыс.", "млн."]
+        technical: true
 
     resources:
       - name: Сумма

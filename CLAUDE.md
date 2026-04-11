@@ -9,7 +9,7 @@ AI-assistant for 1C Analytics dashboards. Users ask questions in Russian, system
 - **registers.yaml is gitignored.** Template: `registers.example.yaml`. Never commit real registers.
 - **Tool caller uses Ollama native API** (`/api/chat`), NOT `/v1/chat/completions`. The OpenAI-compatible endpoint breaks tool calling for Gemma.
 - **Dimension keys must be Latin** in tool schemas. Cyrillic in JSON Schema confuses small models. See `_dim_key()` mapping in `tool_defs.py`.
-- **Exclude technical dimensions** from tool schemas: `Показатель_номер`, `Ед_изм`, `Масштаб`, `Месяц`, `ПризнакДоход`. These are auxiliary 1C Analytics fields, not user-queryable.
+- **Exclude technical dimensions** from tool schemas. Mark them with `technical: true` in `registers.yaml` via `sync_metadata.py` interview. Fallback hardcoded list: `Показатель_номер`, `Ед_изм`, `Масштаб`, `Месяц`, `ПризнакДоход`.
 - **1C query text never crosses network.** Only JSON params. 1C builds queries internally.
 
 ## Commands
@@ -112,7 +112,7 @@ One module in Конфигуратор → HTTP-сервисы → `АИАнал
 
 ## Known Issues / TODO
 
-- **Metadata enrichment needed**: `sync_metadata.py` should use LLM interview to classify fields as technical vs user-facing. Currently technical fields are hardcoded in `tool_defs.py`.
+- **Metadata enrichment**: `sync_metadata.py` has interactive interview mode. Run it to annotate new fields with `technical`/`role`/`description_en`. `tool_defs.py` reads annotations from metadata (falls back to hardcoded list for unannotated registers).
 - **Ollama port**: production server uses `10.10.90.188:11443`, not default 11434.
 
 ## Modular Docs

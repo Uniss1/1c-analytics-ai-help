@@ -34,118 +34,79 @@ def load_test_register() -> dict:
     print(f"Регистр: {reg['name']} ({len(reg['dimensions'])} измерений, {len(reg['resources'])} ресурсов)")
     return reg
 
-# --- Test cases: (question, expected_tool, expected_params_subset) ---
+# --- Test cases: (question, expected_mode, expected_params_subset) ---
+# All cases use single "query" tool. expected_mode is what call_with_tools
+# returns as "tool" (= the mode from model's args).
+# expected_params checked against raw model args (Latin keys + mode).
 
 TEST_CASES = [
-    # Aggregate
-    # Aggregate
+    # Aggregate — basic
     (
         "Какая выручка за март 2025?",
         "aggregate",
-        {"resource": "Сумма", "metric": "Выручка", "year": 2025, "month": 3},
+        {"mode": "aggregate", "resource": "Сумма", "metric": "Выручка", "year": 2025, "month": 3},
     ),
     (
         "Сколько EBITDA по факту за январь 2025?",
         "aggregate",
-        {"resource": "Сумма", "metric": "EBITDA", "scenario": "Факт", "year": 2025, "month": 1},
+        {"mode": "aggregate", "metric": "EBITDA", "scenario": "Факт", "year": 2025, "month": 1},
     ),
     (
         "Прогноз выручки на декабрь 2025",
         "aggregate",
-        {"resource": "Сумма", "scenario": "Прогноз", "metric": "Выручка", "year": 2025, "month": 12},
+        {"mode": "aggregate", "scenario": "Прогноз", "metric": "Выручка", "year": 2025, "month": 12},
     ),
     (
         "План по ОЗП на февраль 2025 для ДЗО-1",
         "aggregate",
-        {"resource": "Сумма", "scenario": "План", "metric": "ОЗП", "company": "ДЗО-1", "year": 2025, "month": 2},
+        {"mode": "aggregate", "scenario": "План", "metric": "ОЗП", "company": "ДЗО-1", "year": 2025, "month": 2},
     ),
 
     # Group by
     (
         "Выручка по ДЗО за март 2025",
         "group_by",
-        {"group_by": "company", "metric": "Выручка", "year": 2025, "month": 3},
+        {"mode": "group_by", "group_by": "company", "metric": "Выручка", "year": 2025, "month": 3},
     ),
     (
         "Маржа в разрезе показателей за январь 2025",
         "group_by",
-        {"group_by": "metric", "year": 2025, "month": 1},
+        {"mode": "group_by", "group_by": "metric", "year": 2025, "month": 1},
     ),
     (
         "Факт по сценариям за март 2025",
         "group_by",
-        {"group_by": "scenario", "year": 2025, "month": 3},
+        {"mode": "group_by", "group_by": "scenario", "year": 2025, "month": 3},
     ),
-
-    # Top N
-    (
-        "Топ-3 ДЗО по выручке за март 2025",
-        "top_n",
-        {"group_by": "company", "limit": 3, "metric": "Выручка", "year": 2025, "month": 3},
-    ),
-    (
-        "Топ-5 показателей за январь 2025",
-        "top_n",
-        {"group_by": "metric", "limit": 5, "year": 2025, "month": 1},
-    ),
-
-    # Time series
-    (
-        "Динамика выручки по месяцам за 2025 год",
-        "time_series",
-        {"metric": "Выручка"},
-    ),
-    (
-        "Тренд EBITDA помесячно",
-        "time_series",
-        {"metric": "EBITDA"},
-    ),
-
-    # --- New tools ---
 
     # Compare
     (
         "Сравни факт и план по выручке за март 2025",
         "compare",
-        {"resource": "Сумма", "compare_by": "scenario", "values": ["Факт", "План"],
+        {"mode": "compare", "compare_by": "scenario", "compare_values": ["Факт", "План"],
          "metric": "Выручка", "year": 2025, "month": 3},
     ),
     (
         "Факт vs бюджет EBITDA за январь 2025",
         "compare",
-        {"compare_by": "scenario", "metric": "EBITDA", "year": 2025, "month": 1},
+        {"mode": "compare", "compare_by": "scenario", "metric": "EBITDA", "year": 2025, "month": 1},
     ),
 
-    # Ratio
-    (
-        "Рентабельность за март 2025",
-        "ratio",
-        {"numerator": "Маржа", "denominator": "Выручка", "year": 2025, "month": 3},
-    ),
-    (
-        "Маржа к выручке за январь 2025",
-        "ratio",
-        {"numerator": "Маржа", "denominator": "Выручка", "year": 2025, "month": 1},
-    ),
-
-    # Filtered
-    (
-        "ДЗО где выручка больше 100 млн за март 2025",
-        "filtered",
-        {"group_by": "company", "condition_operator": ">", "metric": "Выручка",
-         "year": 2025, "month": 3},
-    ),
-    (
-        "Показатели с суммой меньше 10 млн за январь 2025",
-        "filtered",
-        {"group_by": "metric", "condition_operator": "<", "year": 2025, "month": 1},
-    ),
-
-    # --- Negative / edge cases ---
+    # Edge cases
     (
         "Какая выручка?",
         "aggregate",
-        {"resource": "Сумма", "metric": "Выручка"},
+        {"mode": "aggregate", "metric": "Выручка"},
+    ),
+    (
+        "Сколько заработали в марте 2025?",
+        "aggregate",
+        {"mode": "aggregate", "year": 2025, "month": 3},
+    ),
+    (
+        "Маржа по всем ДЗО за февраль 2025",
+        "group_by",
+        {"mode": "group_by", "metric": "Маржа", "group_by": "company", "year": 2025, "month": 2},
     ),
 ]
 

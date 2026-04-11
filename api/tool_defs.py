@@ -119,7 +119,7 @@ def _groupable_dimensions(register_metadata: dict) -> list[str]:
             continue
 
         # Check annotations if available
-        if "role" in d:
+        if d.get("role") is not None:
             if d.get("technical"):
                 continue
             if d["role"] in ("group_by", "both"):

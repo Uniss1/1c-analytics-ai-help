@@ -67,8 +67,8 @@ def _enrich_register(row: sqlite3.Row) -> dict:
     for d in dims:
         dim_dict = dict(d)
         # Convert required from int to bool
-        dim_dict["required"] = bool(dim_dict.get("required"))
-        dim_dict["technical"] = bool(dim_dict.get("technical"))
+        dim_dict["required"] = dim_dict.get("required") in (1, True, "1")
+        dim_dict["technical"] = dim_dict.get("technical") in (1, True, "1")
         # Parse allowed_values from JSON string to list
         av = dim_dict.get("allowed_values")
         if av:

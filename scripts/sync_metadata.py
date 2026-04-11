@@ -373,6 +373,46 @@ def main():
             if extras:
                 print(f"    {dim['name']}: {', '.join(extras)}")
 
+        # Look up existing register config from YAML (for interview skip logic)
+        existing_reg = next((r for r in yaml_data.get("registers", []) if isinstance(r, dict) and r.get("name") == name), None)
+
+        # Interactive interview: ask operator about each dimension
+        print(f"\n  --- Интервью по измерениям {name} ---")
+        for dim in dimensions:
+            # Skip date dimensions — always handled by year/month
+            if dim.get("filter_type") == "year_month":
+                print(f'  [auto] "{dim["name"]}" — дата, пропускаю')
+                continue
+
+            # Check if YAML already has annotations for this field
+            existing_dim = None
+            if existing_reg:
+                existing_dim = next(
+                    (d for d in existing_reg.get("dimensions", [])
+                     if isinstance(d, dict) and d.get("name") == dim["name"]),
+                    None,
+                )
+
+            if existing_dim and "technical" in existing_dim:
+                # Already annotated — show and skip
+                tech = existing_dim.get("technical", False)
+                role = existing_dim.get("role", "filter")
+                desc = existing_dim.get("description_en", "")
+                status = "техн." if tech else f"role={role}"
+                print(f'  [yaml] "{dim["name"]}" — {status}, "{desc}"')
+                dim["technical"] = tech
+                if not tech:
+                    dim["role"] = role
+                    dim["description_en"] = desc
+                continue
+
+            # Interview this dimension
+            annotations = interview_dimension(dim)
+            dim["technical"] = annotations.get("technical", False)
+            if not dim["technical"]:
+                dim["role"] = annotations.get("role", "filter")
+                dim["description_en"] = annotations.get("description_en")
+
         # Distinct values for keyword generation (use values already discovered)
         distinct = {}
         for dim in dimensions:
@@ -396,6 +436,13 @@ def main():
                 dim_dict["filter_type"] = d["filter_type"]
             if d.get("values"):
                 dim_dict["values"] = d["values"]
+            # New annotation fields
+            if "technical" in d:
+                dim_dict["technical"] = d["technical"]
+            if d.get("role"):
+                dim_dict["role"] = d["role"]
+            if d.get("description_en"):
+                dim_dict["description_en"] = d["description_en"]
             enriched_dims.append(dim_dict)
 
         synced[name] = {

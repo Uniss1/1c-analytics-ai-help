@@ -4,7 +4,7 @@ AI-assistant for 1C Analytics dashboards. Users ask questions in Russian, system
 
 ## Critical Rules
 
-- **All LLM prompts in English.** Only `formatter.py` instructs to answer in Russian.
+- **All LLM prompts in English.** `answer_formatter.py` uses Russian templates (no LLM).
 - **No hardcoded register metadata.** Always load from `metadata.db` via `get_all_registers()`.
 - **registers.yaml is gitignored.** Template: `registers.example.yaml`. Never commit real registers.
 - **Tool caller uses Ollama native API** (`/api/chat`), NOT `/v1/chat/completions`. The OpenAI-compatible endpoint breaks tool calling for Gemma.
@@ -48,16 +48,17 @@ User → nginx → FastAPI(:8000)
                   ↓
            onec_client.py → POST /analytics/execute (JSON)
                   ↓
-           formatter.py (LLM) → answer in Russian
+           answer_formatter.py (template) → answer in Russian
 ```
 
 ## Key Files
 
 | Path | Purpose |
 |------|---------|
-| `api/tool_defs.py` | 7 tool schemas for Gemma (Latin keys, enum values in Russian) |
-| `api/tool_caller.py` | Ollama `/api/chat` with tools, retry logic, response parsing |
+| `api/tool_defs.py` | Single `query` tool schema with `mode` enum (Latin keys, enum values in Russian) |
+| `api/tool_caller.py` | Ollama `/api/chat` with tools, retry logic, normalization to 1C params |
 | `api/param_validator.py` | Validate JSON params before sending to 1C |
+| `api/answer_formatter.py` | Template-based formatting of 1C results into Russian text (no LLM) |
 | `api/metadata.py` | Register lookup by keywords. **Single-register fallback**: if only 1 register in DB, uses it without keyword match |
 | `api/onec_client.py` | HTTP client to 1C `/analytics/execute` |
 | `api/config.py` | Pydantic Settings from `.env`. Default model: `gemma4:e2b` |
@@ -66,17 +67,20 @@ User → nginx → FastAPI(:8000)
 | `docs/1c-http-service-spec.md` | Contract for 1C HTTP service endpoint |
 | `docs/1c-http-service-module.md` | Full BSL code for 1C HTTP service module |
 
-## 7 Tools (tool_defs.py)
+## Single Query Tool (tool_defs.py)
 
-| Tool | Use case | Key params |
-|------|----------|------------|
-| `aggregate` | Single sum for period | resource, filters, period |
-| `group_by` | Breakdown by dimension | + group_by |
-| `top_n` | Ranking (default limit=10) | + group_by, limit |
-| `time_series` | Monthly dynamics | period optional |
-| `compare` | Two values side by side | + compare_by, values (2) |
-| `ratio` | Metric division | + numerator, denominator |
-| `filtered` | HAVING threshold | + condition_operator, condition_value |
+One `query` tool with a `mode` enum replaces the previous 7 separate tools. Model picks the mode and fills parameters in one call. This reduces confusion for the 5B model — one tool to call, always.
+
+| Mode | Use case | Extra params |
+|------|----------|--------------|
+| `aggregate` | Single sum for period | — |
+| `group_by` | Breakdown by dimension (also top-N) | group_by |
+| `compare` | Two values side by side | compare_by, compare_values (2) |
+
+**Required params:** `mode`, `resource`, `year`, `month`
+**Filter dimensions** (auto-generated from metadata): `scenario`, `contour`, `metric`, `company`, etc.
+
+The 1C HTTP service still handles all 7 tool types (aggregate, group_by, top_n, time_series, compare, ratio, filtered). `tool_caller.py` normalizes mode→tool mapping before sending to 1C.
 
 ## Dimension Key Mapping (tool_defs.py)
 

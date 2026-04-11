@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .config import settings
-from .formatter import format_response
+from .answer_formatter import format_answer
 from .history import (
     check_cache,
     create_session,
@@ -315,17 +315,13 @@ async def _handle_data(
     if not data and not computed:
         return {"answer": "Данные за указанный период не найдены.", "register_name": register_name}
 
-    # Format response
-    t0 = time.monotonic()
-    format_data = data
-    if computed:
-        format_data = {"rows": data, "computed": computed}
-    answer, fmt_debug = await format_response(message, format_data, register_name)
+    # Format response (template, no LLM)
+    mode = tool_result.get("tool", "aggregate")
+    answer = format_answer(mode, params, data, computed=computed)
     debug["steps"].append({
         "step": "formatter",
+        "mode": mode,
         "raw_data_rows": len(data),
-        "raw_llm_response": fmt_debug.get("raw_llm_response"),
-        "ms": int((time.monotonic() - t0) * 1000),
     })
 
     return {
@@ -349,12 +345,9 @@ async def _handle_clarification_response(
 
     debug["steps"].append({"step": "clarification_response", "pending_tool": pending.get("tool")})
 
-    # Re-run tool calling with combined context
-    original_desc = pending.get("params", {}).get("understood", {}).get("описание", "")
-    combined = f"{original_desc}. Уточнение: {message}" if original_desc else message
-
+    # Re-run tool calling with the clarification message
     t0 = time.monotonic()
-    tool_result = await call_with_tools(combined, register_meta)
+    tool_result = await call_with_tools(message, register_meta)
     debug["steps"].append({
         "step": "tool_caller_retry",
         "tool": tool_result.get("tool"),
@@ -415,10 +408,8 @@ async def _handle_clarification_response(
     if not data and not computed:
         answer = "Данные за указанный период не найдены."
     else:
-        format_data = data
-        if computed:
-            format_data = {"rows": data, "computed": computed}
-        answer, _ = await format_response(message, format_data, register_name)
+        mode = pending.get("tool", "aggregate")
+        answer = format_answer(mode, tool_result.get("params", {}), data, computed=computed)
 
     latency = int((time.monotonic() - start) * 1000)
     query_text = onec_result.get("query_text")

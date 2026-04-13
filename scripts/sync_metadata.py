@@ -126,7 +126,8 @@ def probe_register(register_name: str) -> dict | None:
         if result.get("success"):
             print(f"  {register_name}: пустой (0 строк)")
             return {}
-        print(f"  {register_name}: ошибка — {result.get('error', '?')}")
+        err = result.get("error_message") or result.get("error") or "?"
+        print(f"  {register_name}: ошибка — {err}")
         return None
     except Exception as e:
         print(f"  {register_name}: не найден ({e})")
@@ -336,7 +337,8 @@ def main():
     try:
         result = query_1c("ВЫБРАТЬ ПЕРВЫЕ 1 1 КАК Тест")
         if not result.get("success"):
-            print(f"ОШИБКА: {result.get('error')}")
+            err = result.get("error_message") or result.get("error") or "?"
+            print(f"ОШИБКА: {err}")
             sys.exit(1)
         print("OK\n")
     except Exception as e:

@@ -1,10 +1,10 @@
-# 1С HTTP-сервис: спецификация эндпоинтов /analytics/execute и /query
+# 1С HTTP-сервис: спецификация эндпоинтов /analytics_execute и /query
 
 ## Назначение
 
 Сервис предоставляет два эндпоинта:
 
-- `/analytics/execute` — основной канал работы. Принимает JSON с именем
+- `/analytics_execute` — основной канал работы. Принимает JSON с именем
   инструмента и параметрами, собирает и выполняет 1С-запрос на стороне 1С.
   Текст запроса через сеть не передаётся.
 - `/query` — служебный whitelist-канал для `scripts/sync_metadata.py`.
@@ -12,9 +12,9 @@
   distinct-значения). Сырой текст клиента не исполняется: модуль распознаёт
   паттерн, валидирует параметры и пересобирает запрос из доверенного шаблона.
 
-## Эндпоинт /analytics/execute
+## Эндпоинт /analytics_execute
 
-**POST** `/analytics/execute`
+**POST** `/analytics_execute`
 
 **Content-Type:** `application/json`
 **Авторизация:** Basic Auth (те же credentials, что и для `/query`)
@@ -229,7 +229,7 @@
 **POST** `/query`
 
 **Content-Type:** `application/json`
-**Авторизация:** Basic Auth (общая с `/analytics/execute`)
+**Авторизация:** Basic Auth (общая с `/analytics_execute`)
 
 Используется только `scripts/sync_metadata.py` для первичного исследования
 метаданных. Принимает JSON `{"query": "<текст>", "params": {}}` и распознаёт
@@ -285,5 +285,5 @@
 }
 ```
 
-Типы ошибок те же, что и у `/analytics/execute` (`invalid_params`,
+Типы ошибок те же, что и у `/analytics_execute` (`invalid_params`,
 `missing_params`, `execution_error`).

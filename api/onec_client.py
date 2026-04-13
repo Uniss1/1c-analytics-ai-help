@@ -24,7 +24,7 @@ async def execute_query(query: str, params: dict) -> dict:
 async def execute_tool(tool_result: dict, register_name: str) -> dict:
     """Execute tool via 1C HTTP service (JSON params, no query text).
 
-    POST to /analytics/execute with:
+    POST to /analytics_execute with:
         {"register": str, "tool": str, "params": dict}
 
     Returns: 1C response dict:
@@ -39,7 +39,7 @@ async def execute_tool(tool_result: dict, register_name: str) -> dict:
 
     async with httpx.AsyncClient(timeout=settings.query_timeout) as client:
         response = await client.post(
-            f"{settings.onec_base_url}/analytics/execute",
+            f"{settings.onec_base_url}/analytics_execute",
             json=payload,
             auth=(settings.onec_user, settings.onec_password),
         )

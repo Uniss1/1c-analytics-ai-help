@@ -10,7 +10,7 @@ from api.onec_client import execute_tool
 def mock_1c_success(monkeypatch):
     """Mock httpx to return a successful 1C response."""
     async def mock_post(self, url, **kwargs):
-        assert "/analytics/execute" in url
+        assert "/analytics_execute" in url
         body = kwargs.get("json", {})
         assert "register" in body
         assert "tool" in body

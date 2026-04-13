@@ -46,7 +46,7 @@ User → nginx → FastAPI(:8000)
                   ↓
            param_validator.py
                   ↓
-           onec_client.py → POST /analytics/execute (JSON)
+           onec_client.py → POST /analytics_execute (JSON)
                   ↓
            answer_formatter.py (template) → answer in Russian
 ```
@@ -60,7 +60,7 @@ User → nginx → FastAPI(:8000)
 | `api/param_validator.py` | Validate JSON params before sending to 1C |
 | `api/answer_formatter.py` | Template-based formatting of 1C results into Russian text (no LLM) |
 | `api/metadata.py` | Register lookup by keywords. **Single-register fallback**: if only 1 register in DB, uses it without keyword match |
-| `api/onec_client.py` | HTTP client to 1C `/analytics/execute` |
+| `api/onec_client.py` | HTTP client to 1C `/analytics_execute` |
 | `api/config.py` | Pydantic Settings from `.env`. Default model: `gemma4:e2b` |
 | `registers.example.yaml` | Template for register metadata (gitignored `registers.yaml` is the real config) |
 | `scripts/seed_metadata.py` | Drops and recreates all tables from `registers.yaml` |

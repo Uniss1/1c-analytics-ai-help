@@ -1,4 +1,4 @@
-# Модуль HTTP-сервиса 1С: /analytics/execute и /query
+# Модуль HTTP-сервиса 1С: /analytics_execute и /query
 
 Модуль обработки запросов HTTP-сервиса для AI-ассистента.
 Вставить в: Конфигуратор → HTTP-сервисы → `АИАналитика` → Модуль обработки.
@@ -8,14 +8,14 @@
 1. Создать HTTP-сервис: `АИАналитика`
 2. Корневой URL: `/ai`
 3. Шаблоны URL (два):
-   - `/analytics/execute` — метод `POST`, обработчик `ОбработатьЗапрос`
+   - `/analytics_execute` — метод `POST`, обработчик `ОбработатьЗапрос`
    - `/query` — метод `POST`, обработчик `ОбработатьЗапросDiscovery`
 
 Шаблон `/query` нужен только для `scripts/sync_metadata.py`: он принимает
 ограниченный whitelist запросов (health-check, probe-регистр, distinct-значения)
 и пересобирает текст запроса из доверенного шаблона — сырой БСЛ-текст клиента
 никогда не попадает в `Новый Запрос()`. Для регулярных пользовательских
-запросов используется только `/analytics/execute`.
+запросов используется только `/analytics_execute`.
 
 ---
 
@@ -24,7 +24,7 @@
 ```bsl
 // ===========================================================================
 // Модуль HTTP-сервиса АИАналитика
-// Эндпоинт: POST /hs/ai/analytics/execute
+// Эндпоинт: POST /hs/ai/analytics_execute
 //
 // Принимает JSON {register, tool, params}, собирает и выполняет 1С-запрос,
 // возвращает результат в JSON.
@@ -1089,7 +1089,7 @@
 ### aggregate — выручка за март 2025
 
 ```bash
-curl -X POST http://1c-server/base/hs/ai/analytics/execute \
+curl -X POST http://1c-server/base/hs/ai/analytics_execute \
   -u ai_assistant:password \
   -H "Content-Type: application/json" \
   -d '{
@@ -1110,7 +1110,7 @@ curl -X POST http://1c-server/base/hs/ai/analytics/execute \
 ### group_by — выручка по ДЗО
 
 ```bash
-curl -X POST http://1c-server/base/hs/ai/analytics/execute \
+curl -X POST http://1c-server/base/hs/ai/analytics_execute \
   -u ai_assistant:password \
   -H "Content-Type: application/json" \
   -d '{
@@ -1132,7 +1132,7 @@ curl -X POST http://1c-server/base/hs/ai/analytics/execute \
 ### top_n — топ-5 ДЗО
 
 ```bash
-curl -X POST http://1c-server/base/hs/ai/analytics/execute \
+curl -X POST http://1c-server/base/hs/ai/analytics_execute \
   -u ai_assistant:password \
   -H "Content-Type: application/json" \
   -d '{
@@ -1155,7 +1155,7 @@ curl -X POST http://1c-server/base/hs/ai/analytics/execute \
 ### time_series — динамика помесячно
 
 ```bash
-curl -X POST http://1c-server/base/hs/ai/analytics/execute \
+curl -X POST http://1c-server/base/hs/ai/analytics_execute \
   -u ai_assistant:password \
   -H "Content-Type: application/json" \
   -d '{
@@ -1175,7 +1175,7 @@ curl -X POST http://1c-server/base/hs/ai/analytics/execute \
 ### compare — факт vs план
 
 ```bash
-curl -X POST http://1c-server/base/hs/ai/analytics/execute \
+curl -X POST http://1c-server/base/hs/ai/analytics_execute \
   -u ai_assistant:password \
   -H "Content-Type: application/json" \
   -d '{
@@ -1196,7 +1196,7 @@ curl -X POST http://1c-server/base/hs/ai/analytics/execute \
 ### ratio — рентабельность (маржа / выручка)
 
 ```bash
-curl -X POST http://1c-server/base/hs/ai/analytics/execute \
+curl -X POST http://1c-server/base/hs/ai/analytics_execute \
   -u ai_assistant:password \
   -H "Content-Type: application/json" \
   -d '{
@@ -1218,7 +1218,7 @@ curl -X POST http://1c-server/base/hs/ai/analytics/execute \
 ### filtered — ДЗО с выручкой > 100 млн
 
 ```bash
-curl -X POST http://1c-server/base/hs/ai/analytics/execute \
+curl -X POST http://1c-server/base/hs/ai/analytics_execute \
   -u ai_assistant:password \
   -H "Content-Type: application/json" \
   -d '{

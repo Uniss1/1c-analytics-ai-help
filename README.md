@@ -78,7 +78,7 @@ python3 scripts/calibrate_tools.py --model qwen3.5:4b --url http://<host>:11434
       (ok) ─────────────────┘
             ↓
       onec_client.py → 1С HTTP-сервис
-      POST /analytics/execute (JSON)
+      POST /analytics_execute (JSON)
             ↓
       answer_formatter.py (шаблон, без LLM) → ответ
 ```
@@ -93,7 +93,7 @@ python3 scripts/calibrate_tools.py --model qwen3.5:4b --url http://<host>:11434
 | Ollama | 0.6+ |
 | Gemma 4 E2B | 5.1B Q4_K_M (tool calling) |
 | SQLite | 3.x (встроен в Python) |
-| 1С Аналитика | с HTTP-сервисом `/analytics/execute` |
+| 1С Аналитика | с HTTP-сервисом `/analytics_execute` |
 | ai-chat | Uniss1/ai-chat на порту 3001 |
 
 ## Стек
@@ -134,7 +134,7 @@ tests/                  # pytest (unit + e2e, respx-мокинг)
 web/                    # Standalone web-чат с debug-панелью
 widget/                 # Виджет для встраивания в 1С Аналитику
 docs/
-├── 1c-http-service-spec.md   # Контракт /analytics/execute
+├── 1c-http-service-spec.md   # Контракт /analytics_execute
 ├── 1c-http-service-module.md # BSL-код HTTP-сервиса
 ├── decisions/                # ADR (self-healing и т.п.)
 ├── specs/                    # Дизайн-доки

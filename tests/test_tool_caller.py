@@ -33,41 +33,42 @@ REGISTER_META = {
 }
 
 
-def test_normalize_aggregate():
+def test_normalize_aggregate_arrays():
+    """Array filter values pass through as arrays; defaults also emitted as arrays."""
     args = {
         "mode": "aggregate",
         "resource": "Сумма",
-        "metric": "Выручка",
-        "scenario": "Факт",
+        "metric": ["Выручка"],
+        "scenario": ["Факт"],
         "year": 2025,
         "month": 3,
     }
     tool, params = _normalize_params(args, REGISTER_META)
     assert tool == "aggregate"
-    assert params["filters"]["Показатель"] == "Выручка"
-    assert params["filters"]["Сценарий"] == "Факт"
+    assert params["filters"]["Показатель"] == ["Выручка"]
+    assert params["filters"]["Сценарий"] == ["Факт"]
     assert params["period"] == {"year": 2025, "month": 3}
 
 
 def test_normalize_aggregate_applies_defaults():
-    """Missing scenario → default 'Факт' from metadata."""
+    """Missing scenario → default 'Факт' from metadata, wrapped in array."""
     args = {
         "mode": "aggregate",
         "resource": "Сумма",
-        "metric": "Выручка",
+        "metric": ["Выручка"],
         "year": 2025,
         "month": 3,
     }
     tool, params = _normalize_params(args, REGISTER_META)
-    assert params["filters"]["Сценарий"] == "Факт"
-    assert params["filters"]["КонтурПоказателя"] == "свод"
+    assert params["filters"]["Сценарий"] == ["Факт"]
+    assert params["filters"]["КонтурПоказателя"] == ["свод"]
 
 
 def test_normalize_group_by():
     args = {
         "mode": "group_by",
         "resource": "Сумма",
-        "metric": "Выручка",
+        "metric": ["Выручка"],
         "group_by": "company",
         "year": 2025,
         "month": 3,
@@ -77,13 +78,14 @@ def test_normalize_group_by():
     assert params["group_by"] == ["ДЗО"]
     # group_by dimension should NOT appear in filters
     assert "ДЗО" not in params["filters"]
+    assert params["filters"]["Показатель"] == ["Выручка"]
 
 
 def test_normalize_compare():
     args = {
         "mode": "compare",
         "resource": "Сумма",
-        "metric": "Выручка",
+        "metric": ["Выручка"],
         "compare_by": "scenario",
         "compare_values": ["Факт", "План"],
         "year": 2025,
@@ -95,6 +97,77 @@ def test_normalize_compare():
     assert params["values"] == ["Факт", "План"]
     # compare_by dimension should NOT appear in filters
     assert "Сценарий" not in params["filters"]
+    assert params["filters"]["Показатель"] == ["Выручка"]
+
+
+def test_normalize_string_filter_coerced_to_array():
+    """Small models sometimes emit a string — wrap in single-element array."""
+    args = {
+        "mode": "aggregate",
+        "resource": "Сумма",
+        "metric": "Выручка",
+        "scenario": "Факт",
+        "year": 2025, "month": 3,
+    }
+    _, params = _normalize_params(args, REGISTER_META)
+    assert params["filters"]["Показатель"] == ["Выручка"]
+    assert params["filters"]["Сценарий"] == ["Факт"]
+
+
+def test_normalize_empty_array_dropped_and_default_applied():
+    """Empty array is dropped; default kicks in as an array if one exists."""
+    args = {
+        "mode": "aggregate",
+        "resource": "Сумма",
+        "metric": ["Выручка"],
+        "scenario": [],
+        "year": 2025, "month": 3,
+    }
+    _, params = _normalize_params(args, REGISTER_META)
+    assert params["filters"]["Сценарий"] == ["Факт"]
+
+
+def test_normalize_multi_value_company_preserved():
+    """['ДЗО-1','ДЗО-2'] stays as two-element array in filters."""
+    args = {
+        "mode": "aggregate",
+        "resource": "Сумма",
+        "metric": ["Выручка"],
+        "company": ["ДЗО-1", "ДЗО-2"],
+        "year": 2025, "month": 3,
+    }
+    _, params = _normalize_params(args, REGISTER_META)
+    assert params["filters"]["ДЗО"] == ["ДЗО-1", "ДЗО-2"]
+
+
+def test_normalize_year_only_no_month():
+    """month absent → period has only 'year', no 'month' key."""
+    args = {
+        "mode": "aggregate",
+        "resource": "Сумма",
+        "metric": ["Выручка"],
+        "scenario": ["Факт"],
+        "company": ["ДЗО-1"],
+        "year": 2024,
+    }
+    _, params = _normalize_params(args, REGISTER_META)
+    assert params["period"] == {"year": 2024}
+    assert "month" not in params["period"]
+    assert params["needs_clarification"] is False
+
+
+def test_normalize_compare_values_unchanged():
+    """compare_values is not a filter — keep list shape, don't touch it."""
+    args = {
+        "mode": "compare",
+        "resource": "Сумма",
+        "metric": ["Выручка"],
+        "compare_by": "scenario",
+        "compare_values": ["Факт", "План"],
+        "year": 2025, "month": 3,
+    }
+    _, params = _normalize_params(args, REGISTER_META)
+    assert params["values"] == ["Факт", "План"]
 
 
 def test_normalize_missing_period_sets_clarification():

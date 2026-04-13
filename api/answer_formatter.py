@@ -53,9 +53,16 @@ def format_answer(
 
     filters = params.get("filters", {})
     period = params.get("period", {})
-    metric = filters.get("Показатель", "")
-    scenario = filters.get("Сценарий", "")
-    company = filters.get("ДЗО", "")
+
+    def _fval(v):
+        """Normalize filter value: list → joined string, scalar → string."""
+        if isinstance(v, list):
+            return ", ".join(str(x) for x in v)
+        return str(v) if v else ""
+
+    metric = _fval(filters.get("Показатель", ""))
+    scenario = _fval(filters.get("Сценарий", ""))
+    company = _fval(filters.get("ДЗО", ""))
     period_text = _period_str(period)
 
     if mode == "aggregate":

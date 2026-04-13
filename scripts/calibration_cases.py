@@ -182,7 +182,7 @@ def _aggregate_base(register: dict, year: int, month: int) -> list[CalibrationCa
             expected_mode="aggregate",
             expected_args={
                 "mode": "aggregate", "resource": resource,
-                _dim_key(metric_dim["name"]): metric_value,
+                _dim_key(metric_dim["name"]): [metric_value],
                 "year": year, "month": month,
             },
             category="base",
@@ -196,8 +196,8 @@ def _aggregate_base(register: dict, year: int, month: int) -> list[CalibrationCa
             expected_mode="aggregate",
             expected_args={
                 "mode": "aggregate", "resource": resource,
-                _dim_key(metric_dim["name"]): metric_value,
-                _dim_key(scenario_dim["name"]): scen_value,
+                _dim_key(metric_dim["name"]): [metric_value],
+                _dim_key(scenario_dim["name"]): [scen_value],
                 "year": year, "month": month,
             },
             category="base",
@@ -211,11 +211,43 @@ def _aggregate_base(register: dict, year: int, month: int) -> list[CalibrationCa
             expected_mode="aggregate",
             expected_args={
                 "mode": "aggregate", "resource": resource,
-                _dim_key(metric_dim["name"]): metric_value,
-                _dim_key(company_dim["name"]): comp_value,
+                _dim_key(metric_dim["name"]): [metric_value],
+                _dim_key(company_dim["name"]): [comp_value],
                 "year": year, "month": month,
             },
             category="base",
+        ))
+
+    if metric_dim:
+        metric_value = metric_dim["allowed_values"][0]
+        cases.append(CalibrationCase(
+            question=f"Какая {metric_value} за {year} год",
+            expected_mode="aggregate",
+            expected_args={
+                "mode": "aggregate", "resource": resource,
+                _dim_key(metric_dim["name"]): [metric_value],
+                "year": year,
+                # month intentionally omitted — whole-year query
+            },
+            category="base",
+            note="year-only period",
+        ))
+
+    if metric_dim and company_dim and len(company_dim.get("allowed_values", [])) >= 2:
+        metric_value = metric_dim["allowed_values"][0]
+        v1, v2 = company_dim["allowed_values"][:2]
+        cases.append(CalibrationCase(
+            question=f"{metric_value} за {year} год у {v1} и {v2}",
+            expected_mode="aggregate",
+            expected_args={
+                "mode": "aggregate", "resource": resource,
+                _dim_key(metric_dim["name"]): [metric_value],
+                _dim_key(company_dim["name"]): [v1, v2],
+                "year": year,
+                # month intentionally omitted — whole-year query
+            },
+            category="base",
+            note="multi-value company + year-only",
         ))
 
     return cases
@@ -235,7 +267,7 @@ def _group_by_base(register: dict, year: int, month: int) -> list[CalibrationCas
             expected_mode="group_by",
             expected_args={
                 "mode": "group_by", "resource": resource,
-                _dim_key(metric_dim["name"]): metric_value,
+                _dim_key(metric_dim["name"]): [metric_value],
                 "group_by": _dim_key(group_dim["name"]),
                 "year": year, "month": month,
             },
@@ -246,7 +278,7 @@ def _group_by_base(register: dict, year: int, month: int) -> list[CalibrationCas
             expected_mode="group_by",
             expected_args={
                 "mode": "group_by", "resource": resource,
-                _dim_key(metric_dim["name"]): metric_value,
+                _dim_key(metric_dim["name"]): [metric_value],
                 "group_by": _dim_key(group_dim["name"]),
                 "year": year, "month": month,
             },
@@ -272,7 +304,7 @@ def _compare_base(register: dict, year: int, month: int) -> list[CalibrationCase
         }
         if metric_dim and metric_dim is not compare_dim:
             metric_value = metric_dim["allowed_values"][0]
-            args[_dim_key(metric_dim["name"])] = metric_value
+            args[_dim_key(metric_dim["name"])] = [metric_value]
             q = f"Сравни {v1} и {v2} по {metric_value} за {month_nom} {year}"
         else:
             q = f"Сравни {v1} и {v2} за {month_nom} {year}"

@@ -9,7 +9,7 @@
 # registers.yaml в .gitignore — не затирается при git pull
 
 registers:
-  - name: РегистрСведений.Витрина_Дашборда
+  - name: Витрина_Дашборда   # только идентификатор, БЕЗ префикса РегистрСведений./РегистрНакопления. — 1С соберёт полное имя из type
     description: Витрина дашборда
     type: information_register
 

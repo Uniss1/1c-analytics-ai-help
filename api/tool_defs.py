@@ -28,6 +28,10 @@ def is_technical_dim(dim: dict) -> bool:
 def _filter_properties(register_metadata: dict) -> tuple[dict, list[str]]:
     """Build JSON Schema properties for filter dimensions.
 
+    Filter values are always arrays of strings. Small models sometimes emit
+    scalars — tool_caller normalizes those to single-element arrays before
+    validation.
+
     Returns (properties_dict, required_keys).
     Skips dimensions marked as technical in metadata.
     Falls back to hardcoded list if annotations are missing (backwards compat).
@@ -52,23 +56,25 @@ def _filter_properties(register_metadata: dict) -> tuple[dict, list[str]]:
         allowed = dim.get("allowed_values", [])
         default = dim.get("default_value")
 
-        prop: dict = {"type": "string"}
+        item_schema: dict = {"type": "string"}
+        if allowed:
+            item_schema["enum"] = [str(v) for v in allowed]
 
-        # Use description_en from metadata if available
         if dim.get("description_en"):
             desc = dim["description_en"]
         else:
             desc = f"Dimension '{name}'"
             if dim.get("description"):
                 desc += f". {dim['description']}"
+        desc = desc.rstrip(".") + ". Always pass as array, even for one value."
         if default:
-            desc += f". Default: {default}"
+            desc += f" Default: {default}."
 
-        if allowed:
-            prop["enum"] = [str(v) for v in allowed]
-
-        prop["description"] = desc
-        props[key] = prop
+        props[key] = {
+            "type": "array",
+            "items": item_schema,
+            "description": desc,
+        }
 
     return props, required
 
@@ -170,7 +176,10 @@ def build_tools(register_metadata: dict) -> list[dict]:
         },
         "month": {
             "type": "integer",
-            "description": "Month from the question (1-12). E.g. 'март' = 3",
+            "description": (
+                "Month 1-12 (e.g. 'март' = 3). "
+                "Omit entirely for whole-year queries ('за 2024 год')."
+            ),
         },
         "group_by": {
             "type": "string",
@@ -199,7 +208,7 @@ def build_tools(register_metadata: dict) -> list[dict]:
         },
     }
 
-    required = ["mode", "resource", "year", "month"]
+    required = ["mode", "resource", "year"]
 
     tool_query = {
         "type": "function",
@@ -307,14 +316,20 @@ def _pick_example_dims(register_metadata: dict) -> dict:
     return result
 
 
-def _format_kwargs(pairs: list[tuple[str, object]]) -> str:
-    """Render list of (key, value) as Python-like kwargs for few-shot."""
+def _format_kwargs(pairs: list[tuple[str, object]], filter_keys: set[str] | None = None) -> str:
+    """Render list of (key, value) as Python-like kwargs for few-shot.
+
+    filter_keys: keys that must be rendered as arrays; wraps scalars in [..].
+    """
+    filter_keys = filter_keys or set()
     out = []
     for k, v in pairs:
         if v is None:
             continue
         if isinstance(v, list):
             rendered = "[" + ", ".join(f'"{x}"' for x in v) + "]"
+        elif k in filter_keys and isinstance(v, str):
+            rendered = f'["{v}"]'
         elif isinstance(v, str):
             rendered = f'"{v}"'
         else:
@@ -377,6 +392,14 @@ def build_system_message(register_metadata: dict) -> str:
     compare_key = ex["compare_key"]
     compare_values = ex["compare_values"]
 
+    # Compute filter_keys: all dim keys that are filter-like (non-date, non-technical)
+    filter_keys = {
+        _dim_key(d["name"])
+        for d in register_metadata.get("dimensions", [])
+        if d.get("filter_type") not in ("year_month", "range")
+        and not is_technical_dim(d)
+    }
+
     lines.append("")
     lines.append("EXAMPLES (values taken from this register's enums — copy them exactly):")
 
@@ -387,7 +410,16 @@ def build_system_message(register_metadata: dict) -> str:
     agg_kwargs += [("year", 2025), ("month", 3)]
     topic = metric_value or res
     lines.append(f'Q: "Какой показатель {topic} за март 2025?"')
-    lines.append(f'A: query({_format_kwargs(agg_kwargs)})')
+    lines.append(f'A: query({_format_kwargs(agg_kwargs, filter_keys)})')
+
+    # year-only example (no month) — teaches model to omit month for whole-year queries
+    yo_kwargs: list[tuple[str, object]] = [("mode", "aggregate"), ("resource", res)]
+    if metric_key and metric_value:
+        yo_kwargs.append((metric_key, metric_value))
+    yo_kwargs.append(("year", 2024))
+    lines.append("")
+    lines.append(f'Q: "{topic} за 2024 год"')
+    lines.append(f'A: query({_format_kwargs(yo_kwargs, filter_keys)})')
 
     # group_by
     if group_key:
@@ -397,11 +429,11 @@ def build_system_message(register_metadata: dict) -> str:
         gb_kwargs += [("group_by", group_key), ("year", 2025), ("month", 3)]
         lines.append("")
         lines.append(f'Q: "{topic} по {ex["group_dim"]} за март 2025"')
-        lines.append(f'A: query({_format_kwargs(gb_kwargs)})')
+        lines.append(f'A: query({_format_kwargs(gb_kwargs, filter_keys)})')
 
         lines.append("")
         lines.append(f'Q: "Топ-5 {ex["group_dim"]} по {topic} за март 2025"')
-        lines.append(f'A: query({_format_kwargs(gb_kwargs)})')
+        lines.append(f'A: query({_format_kwargs(gb_kwargs, filter_keys)})')
 
     # compare
     if compare_key and compare_values and len(compare_values) == 2:
@@ -418,7 +450,7 @@ def build_system_message(register_metadata: dict) -> str:
             f'Q: "Сравни {compare_values[0]} и {compare_values[1]} '
             f'по {topic} за март 2025"'
         )
-        lines.append(f'A: query({_format_kwargs(cmp_kwargs)})')
+        lines.append(f'A: query({_format_kwargs(cmp_kwargs, filter_keys)})')
 
     lines.append("")
     lines.append("RULES:")
@@ -427,5 +459,7 @@ def build_system_message(register_metadata: dict) -> str:
     lines.append("3. If a filter value is not mentioned, use its default (Python applies defaults automatically).")
     lines.append("4. Extract year and month from Russian text: 'март 2025' -> year=2025, month=3.")
     lines.append("5. For top-N questions use group_by mode (Python handles limit).")
+    lines.append('6. Filter values are ARRAYS. Pass ["Выручка"] for one value, ["ДЗО-1","ДЗО-2"] for many.')
+    lines.append("7. For whole-year questions ('за 2024 год') omit 'month' entirely.")
 
     return "\n".join(lines)

@@ -28,6 +28,14 @@ def register_meta():
                 "filter_type": "=",
                 "allowed_values": ["Выручка", "EBITDA", "Маржа"],
             },
+            {
+                "name": "ДЗО",
+                "data_type": "Строка",
+                "required": True,
+                "default_value": None,
+                "filter_type": "=",
+                "allowed_values": ["Консолидация", "ДЗО-1", "ДЗО-2"],
+            },
         ],
     }
 
@@ -37,7 +45,7 @@ def test_valid_aggregate(register_meta):
         "tool": "aggregate",
         "params": {
             "resource": "Сумма",
-            "filters": {"Сценарий": "Факт", "Показатель": "Выручка"},
+            "filters": {"Сценарий": ["Факт"], "Показатель": ["Выручка"]},
             "period": {"year": 2025, "month": 3},
         },
     }
@@ -72,7 +80,7 @@ def test_invalid_resource(register_meta):
 
 def test_invalid_filter_value(register_meta):
     result = validate(
-        {"tool": "aggregate", "params": {"resource": "Сумма", "filters": {"Сценарий": "XXX"}, "period": {"year": 2025, "month": 3}}},
+        {"tool": "aggregate", "params": {"resource": "Сумма", "filters": {"Сценарий": ["XXX"]}, "period": {"year": 2025, "month": 3}}},
         register_meta,
     )
     assert result.ok is False
@@ -110,18 +118,19 @@ def test_no_tool():
 
 
 def test_fuzzy_resolves_case_difference(register_meta):
-    """Model writes 'выручка' (lowercase), register has 'Выручка' → auto-healed."""
+    """Model writes 'выручка' (lowercase), register has 'Выручка' → auto-healed.
+    Values are lists — resolution happens element-wise and writes back as list."""
     tool_result = {
         "tool": "aggregate",
         "params": {
             "resource": "Сумма",
-            "filters": {"Показатель": "выручка"},
+            "filters": {"Показатель": ["выручка"]},
             "period": {"year": 2025, "month": 3},
         },
     }
     result = validate(tool_result, register_meta)
     assert result.ok is True
-    assert tool_result["params"]["filters"]["Показатель"] == "Выручка"
+    assert tool_result["params"]["filters"]["Показатель"] == ["Выручка"]
 
 
 def test_fuzzy_resolves_unique_substring(register_meta):
@@ -129,15 +138,15 @@ def test_fuzzy_resolves_unique_substring(register_meta):
     tool_result = {
         "tool": "aggregate",
         "params": {
-            "resource": "сумма",  # lower-case resource
-            "filters": {"Показатель": "ebitda."},
+            "resource": "сумма",
+            "filters": {"Показатель": ["ebitda."]},
             "period": {"year": 2025, "month": 3},
         },
     }
     result = validate(tool_result, register_meta)
     assert result.ok is True
     assert tool_result["params"]["resource"] == "Сумма"
-    assert tool_result["params"]["filters"]["Показатель"] == "EBITDA"
+    assert tool_result["params"]["filters"]["Показатель"] == ["EBITDA"]
 
 
 def test_fuzzy_ambiguous_substring_reports_candidates():
@@ -158,7 +167,7 @@ def test_fuzzy_ambiguous_substring_reports_candidates():
         "tool": "aggregate",
         "params": {
             "resource": "Сумма",
-            "filters": {"Показатель": "выручка"},
+            "filters": {"Показатель": ["выручка"]},
             "period": {"year": 2025, "month": 3},
         },
     }
@@ -176,7 +185,7 @@ def test_error_uses_imperative_copy_wording(register_meta):
             "tool": "aggregate",
             "params": {
                 "resource": "Сумма",
-                "filters": {"Сценарий": "XXX"},
+                "filters": {"Сценарий": ["XXX"]},
                 "period": {"year": 2025, "month": 3},
             },
         },
@@ -203,3 +212,77 @@ def test_compare_values_fuzzy_resolved(register_meta):
     result = validate(tool_result, register_meta)
     assert result.ok is True
     assert tool_result["params"]["values"] == ["Факт", "План"]
+
+
+def test_validate_filter_as_list_ok(register_meta):
+    """Filter values as a list of canonical strings pass validation."""
+    tr = {
+        "tool": "aggregate",
+        "params": {
+            "resource": "Сумма",
+            "filters": {"ДЗО": ["ДЗО-1", "ДЗО-2"]},
+            "period": {"year": 2024},
+        },
+    }
+    result = validate(tr, register_meta)
+    assert result.ok, result.errors
+
+
+def test_validate_filter_list_fuzzy_resolved(register_meta):
+    """Each element of a filter list is fuzzy-resolved to canonical form."""
+    tr = {
+        "tool": "aggregate",
+        "params": {
+            "resource": "Сумма",
+            "filters": {"ДЗО": ["дзо-1", "ДЗО-2"]},
+            "period": {"year": 2024},
+        },
+    }
+    result = validate(tr, register_meta)
+    assert result.ok, result.errors
+    assert tr["params"]["filters"]["ДЗО"] == ["ДЗО-1", "ДЗО-2"]
+
+
+def test_validate_filter_list_one_invalid_element_errors(register_meta):
+    """An unresolvable element in a filter list produces an error naming the dim."""
+    tr = {
+        "tool": "aggregate",
+        "params": {
+            "resource": "Сумма",
+            "filters": {"ДЗО": ["ДЗО-1", "НЕСУЩЕСТВУЮЩЕЕ"]},
+            "period": {"year": 2024},
+        },
+    }
+    result = validate(tr, register_meta)
+    assert not result.ok
+    joined = " | ".join(result.errors)
+    assert "ДЗО" in joined and "НЕСУЩЕСТВУЮЩЕЕ" in joined
+
+
+def test_validate_year_only_period_ok(register_meta):
+    """period {year: 2024} without 'month' passes validation."""
+    tr = {
+        "tool": "aggregate",
+        "params": {
+            "resource": "Сумма",
+            "filters": {"Показатель": ["Выручка"], "ДЗО": ["ДЗО-1"]},
+            "period": {"year": 2024},
+        },
+    }
+    result = validate(tr, register_meta)
+    assert result.ok, result.errors
+
+
+def test_validate_scalar_filter_tolerated(register_meta):
+    """Scalar filter value is tolerated (resolved and written back as list)."""
+    tr = {
+        "tool": "aggregate",
+        "params": {
+            "resource": "Сумма",
+            "filters": {"Показатель": "Выручка"},
+            "period": {"year": 2025, "month": 3},
+        },
+    }
+    result = validate(tr, register_meta)
+    assert result.ok, result.errors
+    assert tr["params"]["filters"]["Показатель"] == ["Выручка"]

@@ -4,6 +4,7 @@ from collections import Counter
 
 import pytest
 
+from api.tool_defs import _dim_key
 from scripts.calibration_cases import (
     CalibrationCase,
     generate_cases,
@@ -71,9 +72,12 @@ def test_expected_args_use_canonical_enum_values(register_meta):
     for c in cases:
         metric = c.expected_args.get("metric")
         if metric is not None:
-            assert metric in allowed_metrics, (
-                f"non-canonical metric in expected_args: {metric!r} for question {c.question!r}"
-            )
+            # filter values are now arrays; check each element
+            values = metric if isinstance(metric, list) else [metric]
+            for v in values:
+                assert v in allowed_metrics, (
+                    f"non-canonical metric in expected_args: {v!r} for question {c.question!r}"
+                )
 
 
 def test_declension_changes_question_but_not_args(register_meta):
@@ -189,3 +193,48 @@ def test_different_register_produces_different_values():
     assert "Альфа" in text_b
     assert "Выручка от реализации" not in text_a
     assert "Альфа" not in text_a
+
+
+def test_filter_values_are_lists(register_meta):
+    """All filter-dimension values in expected_args must be lists (new contract)."""
+    cases = generate_cases(
+        register_meta, seed=5,
+        include_declensions=False, include_typos=False, include_degraded=False,
+    )
+    # Keys that are NOT filter values and should stay scalar
+    non_filter_keys = {"mode", "resource", "year", "month", "group_by", "compare_by", "compare_values"}
+    for c in cases:
+        for key, val in c.expected_args.items():
+            if key not in non_filter_keys:
+                assert isinstance(val, list), (
+                    f"expected_args[{key!r}] should be a list, got {type(val).__name__!r} "
+                    f"({val!r}) in case: {c.question!r}"
+                )
+
+
+def test_year_only_case_has_no_month(register_meta):
+    cases = generate_cases(
+        register_meta, year=2025, month=3,
+        include_declensions=False, include_typos=False, include_degraded=False,
+    )
+    year_only = [c for c in cases if c.note == "year-only period"]
+    assert len(year_only) >= 1, "Expected at least one year-only case"
+    case = year_only[0]
+    assert "month" not in case.expected_args
+    assert case.expected_args.get("year") == 2025
+
+
+def test_multi_value_company_case(register_meta):
+    cases = generate_cases(
+        register_meta, year=2025, month=3,
+        include_declensions=False, include_typos=False, include_degraded=False,
+    )
+    multi = [c for c in cases if c.note == "multi-value company + year-only"]
+    # Only present when register has ≥2 companies and a metric dim.
+    if multi:
+        case = multi[0]
+        # company key should be a list of 2 values
+        company_key = _dim_key("ДЗО")
+        assert isinstance(case.expected_args.get(company_key), list)
+        assert len(case.expected_args[company_key]) == 2
+        assert "month" not in case.expected_args

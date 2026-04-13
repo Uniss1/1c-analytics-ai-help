@@ -131,7 +131,8 @@ def test_required_minimal(register_meta):
     assert "mode" in required
     assert "resource" in required
     assert "year" in required
-    assert "month" in required
+    # month is optional — absence means whole year
+    assert "month" not in required
     # Filters should NOT be required — Python applies defaults
     assert "scenario" not in required
     assert "company" not in required
@@ -164,6 +165,36 @@ def test_system_message_examples_use_register_enum_values(register_meta):
     assert '"Факт"' in msg and '"Прогноз"' in msg
 
 
+def test_filter_dims_are_arrays(register_meta):
+    """Filter dimensions with allowed_values must be arrays of enum strings."""
+    tools = build_tools(register_meta)
+    props = tools[0]["function"]["parameters"]["properties"]
+    for key in ("scenario", "metric", "company", "contour"):
+        assert props[key]["type"] == "array", f"{key} must be array"
+        items = props[key]["items"]
+        assert items["type"] == "string"
+        assert "enum" in items
+    # Scenario enum values preserved on items.enum
+    assert set(props["scenario"]["items"]["enum"]) == {"Факт", "Прогноз", "План"}
+
+
+def test_filter_dim_without_allowed_values_is_array_without_enum():
+    """A filter dim with no allowed_values is still array<string>, no enum."""
+    meta = {
+        "name": "РегистрСведений.Тест",
+        "dimensions": [
+            {"name": "Показатель", "filter_type": "=", "required": True,
+             "allowed_values": []},
+        ],
+        "resources": [{"name": "Сумма"}],
+    }
+    tools = build_tools(meta)
+    props = tools[0]["function"]["parameters"]["properties"]
+    assert props["metric"]["type"] == "array"
+    assert props["metric"]["items"]["type"] == "string"
+    assert "enum" not in props["metric"]["items"]
+
+
 def test_system_message_adapts_to_different_register():
     """Swapping register with different enum values changes the examples."""
     meta = {
@@ -193,3 +224,27 @@ def test_system_message_adapts_to_different_register():
     assert "Альфа" in msg and "Бета" in msg
     # Old hardcoded values should NOT leak in as examples
     assert "EBITDA" not in msg or "Q: " not in msg.split("EBITDA")[0][-50:]
+
+
+def test_system_message_has_array_filter_example(register_meta):
+    msg = build_system_message(register_meta)
+    # At least one example should pass a filter as an array literal
+    assert '["' in msg, "Expected array-literal filter in few-shot"
+
+
+def test_system_message_has_year_only_example(register_meta):
+    """A 'whole year' example must appear — year without month."""
+    msg = build_system_message(register_meta)
+    assert "за 2024 год" in msg or "за 2025 год" in msg
+    # The answer line following a year-only Q must have year= but not month=
+    lines = msg.splitlines()
+    year_only_q = next(
+        (i for i, l in enumerate(lines)
+         if "год" in l and l.lstrip().startswith("Q:")
+         and "март" not in l and "мая" not in l),
+        None,
+    )
+    assert year_only_q is not None, "No year-only Q: line found"
+    answer = lines[year_only_q + 1]
+    assert "year=" in answer
+    assert "month=" not in answer

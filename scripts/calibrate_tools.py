@@ -62,6 +62,10 @@ def check_params(expected: dict, actual: dict) -> list[str]:
                 errors.append(f"  {key}: expected {exp_val!r}, got {act_val!r}")
         elif act_val != exp_val:
             errors.append(f"  {key}: expected {exp_val!r}, got {act_val!r}")
+    # Flag explicit regressions: if `month` is expected to be absent
+    # (year-only queries), emitting it is a mistake.
+    if "month" not in expected and "month" in actual and actual.get("month") is not None:
+        errors.append(f"  month: expected absent (year-only query), got {actual['month']!r}")
     return errors
 
 

@@ -136,6 +136,32 @@ def test_technical_required_dim_does_not_trigger_clarification():
     assert params["needs_clarification"] is False
 
 
+def test_technical_fallback_triggers_without_annotation():
+    """If 'technical' flag is absent from metadata (sync_metadata interview
+    never ran), the hardcoded fallback list must still exclude well-known
+    technical dims like Показатель_номер from needs_clarification."""
+    meta = {
+        "name": "РегистрСведений.Витрина_Дашборда",
+        "dimensions": [
+            {"name": "Сценарий", "required": True, "default_value": "Факт", "filter_type": "="},
+            {"name": "Показатель", "required": True, "default_value": "Выручка", "filter_type": "="},
+            # No "technical" key — relies on _FALLBACK_TECHNICAL set
+            {"name": "Показатель_номер", "required": True, "default_value": None, "filter_type": "="},
+            {"name": "Ед_изм", "required": True, "default_value": None, "filter_type": "="},
+            {"name": "Масштаб", "required": True, "default_value": None, "filter_type": "="},
+            {"name": "ПризнакДоход", "required": True, "default_value": None, "filter_type": "="},
+            {"name": "Период_Показателя", "required": True, "filter_type": "year_month"},
+        ],
+        "resources": [{"name": "Сумма"}],
+    }
+    args = {
+        "mode": "aggregate", "resource": "Сумма",
+        "year": 2025, "month": 3,
+    }
+    _, params = _normalize_params(args, meta)
+    assert params["needs_clarification"] is False
+
+
 # --- Self-healing loop tests -------------------------------------------------
 
 OLLAMA_URL = "http://test-ollama:11434"

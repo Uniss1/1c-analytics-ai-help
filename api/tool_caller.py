@@ -12,7 +12,7 @@ import re
 import httpx
 
 from .config import settings
-from .tool_defs import build_system_message, build_tools, key_to_dim
+from .tool_defs import build_system_message, build_tools, is_technical_dim, key_to_dim
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ def _build_example_call(register_metadata: dict) -> str:
     for dim in register_metadata.get("dimensions", []):
         if dim.get("filter_type") in ("year_month", "range"):
             continue
-        if dim.get("technical"):
+        if is_technical_dim(dim):
             continue
         allowed = dim.get("allowed_values") or []
         if not allowed:
@@ -320,7 +320,7 @@ def _normalize_params(args: dict, register_metadata: dict) -> tuple[str, dict]:
     needs_clarification = False
     for dim in register_metadata.get("dimensions", []):
         name = dim["name"]
-        if dim.get("technical"):
+        if is_technical_dim(dim):
             continue
         if not dim.get("required"):
             continue

@@ -6,7 +6,7 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -16,7 +16,6 @@ from .answer_formatter import format_answer
 from .history import (
     check_cache,
     create_session,
-    get_recent_messages,
     init_history,
     save_cache,
     save_message,
@@ -24,9 +23,8 @@ from .history import (
 from .metadata import find_register, get_all_registers, init_metadata
 from .onec_client import execute_query, execute_tool
 from .param_validator import validate as validate_tool_params
-from .router import classify_intent
 from .tool_caller import call_with_tools
-from .wiki_client import ask_knowledge_base
+from .tool_defs import is_technical_dim
 
 # Configure logging for all api modules
 logging.basicConfig(
@@ -132,57 +130,49 @@ async def chat(req: ChatRequest):
 
     debug["steps"].append({"step": "cache", "hit": False})
 
-    # Classify intent
-    t0 = time.monotonic()
-    intent, router_debug = await classify_intent(req.message, req.dashboard_context)
-    debug["steps"].append({
-        "step": "router",
-        "intent": intent,
-        "input": router_debug.get("input"),
-        "raw_llm_response": router_debug.get("raw_llm_response"),
-        "ms": int((time.monotonic() - t0) * 1000),
-    })
-
-    answer = ""
-    register_name = None
-    query_text = None
-    sources = None
-    needs_clarification = False
-
-    if intent == "data":
-        result = await _handle_data(
-            req.message, req.dashboard_context, dashboard_slug, session_id, debug,
-        )
-        answer = result["answer"]
-        register_name = result.get("register_name")
-        query_text = result.get("query_text")
-        needs_clarification = result.get("needs_clarification", False)
-    else:
-        answer, sources = await _handle_knowledge(req.message, session_id)
-        debug["steps"].append({"step": "knowledge", "sources_count": len(sources) if sources else 0})
+    # Knowledge routing was removed (see docs/superpowers/plans/2026-04-13-restore-knowledge-endpoint.md).
+    # Every /chat call now goes through the data flow directly.
+    result = await _handle_data(
+        req.message, req.dashboard_context, dashboard_slug, session_id, debug,
+    )
+    answer = result["answer"]
+    register_name = result.get("register_name")
+    query_text = result.get("query_text")
+    needs_clarification = result.get("needs_clarification", False)
 
     latency = int((time.monotonic() - start) * 1000)
     debug["total_ms"] = latency
 
-    # Save history
     save_message(session_id, "user", req.message)
     save_message(session_id, "assistant", answer,
-                 intent=intent, register=register_name,
+                 intent="data", register=register_name,
                  query_text=query_text, latency_ms=latency)
 
-    # Save cache (only for complete answers, not clarifications)
     if not needs_clarification:
-        save_cache(req.message, answer, intent, dashboard_slug)
+        save_cache(req.message, answer, "data", dashboard_slug)
 
     return ChatResponse(
         answer=answer,
-        intent=intent,
+        intent="data",
         session_id=session_id,
         latency_ms=latency,
-        sources=sources,
         register_name=register_name,
         needs_clarification=needs_clarification,
         debug=debug,
+    )
+
+
+@app.post("/knowledge")
+async def knowledge_stub():
+    """Stub for the future knowledge endpoint.
+
+    The Wiki/ai-chat integration was disabled to remove latency from /chat
+    while we focus on tool-calling stability. Plan to restore:
+    docs/superpowers/plans/2026-04-13-restore-knowledge-endpoint.md
+    """
+    raise HTTPException(
+        status_code=503,
+        detail="knowledge endpoint temporarily disabled",
     )
 
 
@@ -287,6 +277,8 @@ async def _handle_data(
         lines = ["Уточните, пожалуйста:"]
         for dim in register_meta.get("dimensions", []):
             name = dim["name"]
+            if is_technical_dim(dim):
+                continue
             if not dim.get("required") or dim.get("default_value"):
                 continue
             ft = dim.get("filter_type", "=")
@@ -466,17 +458,3 @@ async def _handle_clarification_response(
     )
 
 
-async def _handle_knowledge(
-    message: str,
-    session_id: str,
-) -> tuple[str, list[dict] | None]:
-    """Knowledge flow: ai-chat → answer with sources."""
-    history = get_recent_messages(session_id, limit=4)
-
-    try:
-        result = await ask_knowledge_base(message, history=history)
-    except Exception as e:
-        logger.error("ai-chat failed: %s", e)
-        return f"Ошибка обращения к базе знаний: {e}", None
-
-    return result["answer"], result.get("sources")

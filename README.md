@@ -62,26 +62,26 @@ python3 scripts/calibrate_tools.py --model qwen3.5:4b --url http://<host>:11434
                     ↓
               FastAPI (:8000)
                     ↓
-            ┌── Router (LLM) ──┐
-            ↓                  ↓
-         "data"           "knowledge"
-            ↓                  ↓
-      metadata.py         wiki_client.py
-      find_register()     → ai-chat сервис
-            ↓
+      metadata.py
+      find_register()
+                    ↓
       tool_caller.py
       Ollama /api/chat + single query tool
-            ↓
+                    ↓
       param_validator.py ←─┐
       быстрая проверка JSON │ self-healing loop
-            ↓               │ (до 3 ретраев с feedback)
+                    ↓       │ (до 3 ретраев с feedback)
       (ok) ─────────────────┘
-            ↓
+                    ↓
       onec_client.py → 1С HTTP-сервис
       POST /analytics_execute (JSON)
-            ↓
+                    ↓
       answer_formatter.py (шаблон, без LLM) → ответ
 ```
+
+LLM-роутер `data | knowledge` и интеграция с `ai-chat` (Wiki.js)
+временно отключены. `POST /knowledge` возвращает 503 как заглушка.
+План возврата: [`docs/superpowers/plans/2026-04-13-restore-knowledge-endpoint.md`](docs/superpowers/plans/2026-04-13-restore-knowledge-endpoint.md).
 
 1С HTTP-сервис принимает JSON с инструментом и параметрами, сам собирает и выполняет запрос на языке 1С. Спецификация эндпоинта: [`docs/1c-http-service-spec.md`](docs/1c-http-service-spec.md).
 
@@ -94,7 +94,6 @@ python3 scripts/calibrate_tools.py --model qwen3.5:4b --url http://<host>:11434
 | Gemma 4 E2B | 5.1B Q4_K_M (tool calling) |
 | SQLite | 3.x (встроен в Python) |
 | 1С Аналитика | с HTTP-сервисом `/analytics_execute` |
-| ai-chat | Uniss1/ai-chat на порту 3001 |
 
 ## Стек
 
@@ -103,7 +102,6 @@ python3 scripts/calibrate_tools.py --model qwen3.5:4b --url http://<host>:11434
 | API | FastAPI, uvicorn, Pydantic Settings |
 | Tool calling | SLM (Gemma 4 E2B / qwen3.5:4b) через Ollama `/api/chat` |
 | Данные | SQLite (metadata + history), 1С HTTP-сервис |
-| Знания | ai-chat (Wiki.js + pgvector + RAG) |
 | Фронтенд | Vanilla JS виджет + standalone web-чат |
 | Прокси | nginx (reverse proxy, script injection) |
 
@@ -118,14 +116,8 @@ api/
 ├── param_validator.py  # Валидация JSON-параметров до отправки в 1С
 ├── onec_client.py      # HTTP-клиент 1С (execute_tool + execute_query)
 ├── metadata.py         # Поиск регистра по ключевым словам
-├── router.py           # Классификация intent (data / knowledge)
 ├── answer_formatter.py # Шаблонное форматирование ответа (без LLM)
-├── llm_client.py       # Клиент Ollama (multi-GPU)
-├── wiki_client.py      # Клиент ai-chat (база знаний)
-├── history.py          # История чата SQLite
-├── date_parser.py      # Парсинг периодов из русского текста
-├── query_templates.py  # legacy
-└── query_generator.py  # legacy
+└── history.py          # История чата SQLite
 scripts/
 ├── calibrate_tools.py  # Калибровка tool calling (12 базовых + 6 degraded)
 ├── seed_metadata.py    # Заполнение metadata.db из registers.yaml

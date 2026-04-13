@@ -9,6 +9,22 @@ while enum values and descriptions stay in Russian to match the data.
 """
 
 
+_FALLBACK_TECHNICAL = {"Показатель_номер", "Ед_изм", "Масштаб", "Месяц", "ПризнакДоход"}
+
+
+def is_technical_dim(dim: dict) -> bool:
+    """True if the dimension should be hidden from the model and skipped in
+    clarification/validation logic.
+
+    Uses the explicit ``technical`` flag if set by sync_metadata interview,
+    otherwise falls back to a hardcoded list for backwards compatibility with
+    registers where annotations have never been generated.
+    """
+    if "technical" in dim:
+        return bool(dim["technical"])
+    return dim.get("name") in _FALLBACK_TECHNICAL
+
+
 def _filter_properties(register_metadata: dict) -> tuple[dict, list[str]]:
     """Build JSON Schema properties for filter dimensions.
 
@@ -16,7 +32,6 @@ def _filter_properties(register_metadata: dict) -> tuple[dict, list[str]]:
     Skips dimensions marked as technical in metadata.
     Falls back to hardcoded list if annotations are missing (backwards compat).
     """
-    _FALLBACK_TECHNICAL = {"Показатель_номер", "Ед_изм", "Масштаб", "Месяц", "ПризнакДоход"}
 
     props = {}
     required: list[str] = []
@@ -30,10 +45,7 @@ def _filter_properties(register_metadata: dict) -> tuple[dict, list[str]]:
             continue
 
         # Skip technical dimensions
-        if "technical" in dim:
-            if dim["technical"]:
-                continue
-        elif name in _FALLBACK_TECHNICAL:
+        if is_technical_dim(dim):
             continue
 
         key = _dim_key(name)
@@ -106,10 +118,9 @@ def _resource_enum(register_metadata: dict) -> list[str]:
 def _groupable_dimensions(register_metadata: dict) -> list[str]:
     """Latin keys for dimensions that can be used for GROUP BY.
 
-    Uses role annotation from metadata. Falls back to hardcoded skip list.
+    Uses role annotation from metadata. Falls back to hardcoded skip list
+    (via is_technical_dim).
     """
-    _FALLBACK_SKIP_NAMES = {"Масштаб", "Ед_изм", "Показатель_номер", "Месяц", "ПризнакДоход"}
-
     result = []
     for d in register_metadata.get("dimensions", []):
         name = d["name"]
@@ -118,16 +129,14 @@ def _groupable_dimensions(register_metadata: dict) -> list[str]:
         if d.get("data_type") == "Дата" or d.get("filter_type") in ("year_month", "range"):
             continue
 
-        # Check annotations if available
-        if d.get("role") is not None:
-            if d.get("technical"):
-                continue
-            if d["role"] in ("group_by", "both"):
-                result.append(_dim_key(name))
-        else:
-            # Fallback: old hardcoded logic
-            if name not in _FALLBACK_SKIP_NAMES:
-                result.append(_dim_key(name))
+        if is_technical_dim(d):
+            continue
+
+        # Respect explicit role annotation when present
+        if d.get("role") is not None and d["role"] not in ("group_by", "both"):
+            continue
+
+        result.append(_dim_key(name))
 
     return result
 
@@ -222,7 +231,7 @@ def build_system_message(register_metadata: dict) -> str:
         dim_name = dim["name"]
         if dim.get("filter_type") in ("year_month", "range"):
             continue
-        if dim.get("technical"):
+        if is_technical_dim(dim):
             continue
         key = _dim_key(dim_name)
         allowed = dim.get("allowed_values", [])

@@ -36,13 +36,11 @@ python3 scripts/calibrate_tools.py -v
 ```
 User → nginx → FastAPI(:8000)
                   ↓
-           Router (LLM, GPU 0) → "data" | "knowledge"
-                  ↓                         ↓
-           metadata.py                 wiki_client.py
-           find_register()             → ai-chat
+           metadata.py
+           find_register()
                   ↓
            tool_caller.py
-           Ollama /api/chat + tools
+           Ollama /api/chat + tools (with self-healing retries)
                   ↓
            param_validator.py
                   ↓
@@ -50,6 +48,11 @@ User → nginx → FastAPI(:8000)
                   ↓
            answer_formatter.py (template) → answer in Russian
 ```
+
+The LLM router (`data`/`knowledge`) and the wiki/`ai-chat` integration were
+removed to keep `/chat` latency tight and focus on tool-calling stability.
+`POST /knowledge` is a 503 stub. Plan to restore:
+`docs/superpowers/plans/2026-04-13-restore-knowledge-endpoint.md`.
 
 ## Key Files
 

@@ -111,7 +111,9 @@ def validate(tool_result: dict, register_metadata: dict) -> ValidationResult:
     if month is not None and not (1 <= month <= 12):
         errors.append(f"month: must be an integer between 1 and 12, not {month}.")
 
-    # Filter values check (with fuzzy resolve)
+    # Filter values check — each value is expected as a list of strings.
+    # Scalars are tolerated (wrapped into a one-element list) and rewritten
+    # as a list so downstream consumers see one consistent shape.
     filters = params.get("filters", {})
     dims_by_name = {d["name"]: d for d in register_metadata.get("dimensions", [])}
     for dim_name, value in list(filters.items()):
@@ -121,16 +123,29 @@ def validate(tool_result: dict, register_metadata: dict) -> ValidationResult:
         if not dim:
             continue
         allowed = dim.get("allowed_values") or []
+
+        items = value if isinstance(value, list) else [value]
         if not allowed:
+            # Nothing to resolve, but still normalize shape to a list.
+            filters[dim_name] = [str(x) for x in items]
             continue
-        canonical, candidates = _resolve_enum(value, allowed)
-        if canonical is not None and canonical != value:
-            filters[dim_name] = canonical
-        elif canonical is None:
-            hint = candidates or allowed
-            errors.append(
-                f'{dim_name}: copy EXACTLY one of {hint}. You wrote "{value}".'
-            )
+
+        resolved: list[str] = []
+        had_error = False
+        for item in items:
+            canonical, candidates = _resolve_enum(item, allowed)
+            if canonical is not None:
+                resolved.append(canonical)
+            else:
+                hint = candidates or allowed
+                errors.append(
+                    f'{dim_name}: copy EXACTLY one of {hint}. '
+                    f'You wrote "{item}".'
+                )
+                had_error = True
+
+        if not had_error:
+            filters[dim_name] = resolved
 
     # compare_values: resolve each element against compare_by's allowed values
     if tool == "compare":

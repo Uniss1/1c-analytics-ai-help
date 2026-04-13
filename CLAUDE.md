@@ -80,8 +80,8 @@ One `query` tool with a `mode` enum replaces the previous 7 separate tools. Mode
 | `group_by` | Breakdown by dimension (also top-N) | group_by |
 | `compare` | Two values side by side | compare_by, compare_values (2) |
 
-**Required params:** `mode`, `resource`, `year`, `month`
-**Filter dimensions** (auto-generated from metadata): `scenario`, `contour`, `metric`, `company`, etc.
+**Required params:** `mode`, `resource`, `year` (`month` опционален — отсутствие = запрос за весь год)
+**Filter dimensions** (auto-generated from metadata): `scenario`, `contour`, `metric`, `company`, etc. Каждый фильтр — **массив строк**: `["Факт"]` для одного значения, `["ДЗО-1","ДЗО-2"]` для нескольких.
 
 The 1C HTTP service still handles all 7 tool types (aggregate, group_by, top_n, time_series, compare, ratio, filtered). `tool_caller.py` normalizes mode→tool mapping before sending to 1C.
 
@@ -98,6 +98,33 @@ Model sees Latin keys, 1C gets Cyrillic. Both directions via `_dim_key()` / `key
 ```
 
 **When adding new registers:** add Latin mappings for ALL dimensions. Missing mappings = Cyrillic in schema = broken tool calling.
+
+## Adding a new register
+
+Чек-лист при подключении нового регистра из 1С:
+
+1. **Имя регистра в `registers.yaml`** — только идентификатор (`Витрина_Выручка`),
+   **без** префикса `РегистрСведений.` / `РегистрНакопления.`. Префикс 1С
+   собирает из поля `type`. Префикс в `name` ломает маршрутизацию в BSL-модуле.
+
+2. **Latin-ключи для каждого нового измерения.** Добавить маппинг
+   `<Русское имя> ↔ <latin_key>` в `_KEY_TO_DIM` и `_dim_key()` (`api/tool_defs.py`).
+   Пропущенный маппинг = кириллица в JSON Schema = сломанный tool calling у SLM.
+
+3. **Вручную проверить `technical` и `default`** в `registers.yaml`:
+   - `technical: true` — поле скрывается от модели (вспомогательные измерения
+     вроде `Масштаб`, `Ед_изм`, `Показатель_номер`). Без этого модель пытается
+     их заполнять — лишние уточнения у пользователя.
+   - `default: <значение>` — подставляется автоматически в `filters`, если
+     пользователь не указал. Required-измерение без `default` заставляет
+     бэкенд переспрашивать.
+   Альтернатива ручной правке — интервью `python3 scripts/sync_metadata.py`.
+
+4. **Проверить `.env`** перед калибровкой: `cat .env | grep MODEL_NAME` —
+   модель в `.env` может расходиться с докой.
+
+5. **Запустить** `python3 scripts/seed_metadata.py` → рестарт `uvicorn` →
+   реальный вопрос в браузере (правило «CI-зелёный ≠ работает в браузере»).
 
 ## Config (.env)
 
@@ -132,6 +159,9 @@ One module in Конфигуратор → HTTP-сервисы → `АИАнал
 - Enum-значения и дефолты дублируем и в schema, и в system message — двойное подкрепление
 - Перед бенчмарком: `cat .env | grep MODEL_NAME` — не доверять докам, .env может расходиться
 - Ollama native `/api/chat`, не OpenAI-compat `/v1/chat/completions` — для Gemma тулы ломаются
+- Один tool (`query` с `mode` enum) маскирует ошибки выбора функции — даже Qwen3.5:2b не промахивается, потому что промахнуться некуда. При добавлении 2+ tools обязательна повторная калибровка: без неё проблема всплывёт на проде
+- Фильтры передаём массивом (`["ДЗО-1","ДЗО-2"]`), даже для одного значения. Скаляр 1С принимает для совместимости, но единая форма упрощает промпт и BSL-сборку `В (&Знач)`
+- `month` опционален: «выручка за 2024 год» = `year=2024` без `month`. Few-shot пример учит модель опускать поле, не ставить `12`
 
 **Архитектурные:**
 - Текст 1С-запроса не пересекает сеть. Только JSON params (безопасность + корректность синтаксиса бесплатно)

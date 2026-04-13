@@ -257,6 +257,10 @@ def _normalize_params(args: dict, register_metadata: dict) -> tuple[str, dict]:
     """Convert single query tool arguments to 1C HTTP service format.
 
     Args use Latin keys (metric, scenario, company, year, month) + mode.
+    Filter values are always arrays in the 1C payload. Strings are wrapped
+    in single-element arrays; empty arrays are dropped so that defaults can
+    apply.
+
     Returns (tool_name, params) where tool_name is the mode value
     and params use 1C names (Показатель, Сценарий, ДЗО) + period dict.
     """
@@ -268,55 +272,65 @@ def _normalize_params(args: dict, register_metadata: dict) -> tuple[str, dict]:
     order_by = args.get("order", args.get("order_by", "desc"))
     limit = args.get("limit", 1000)
 
-    # Build period from flat year/month
-    period = {}
-    if year is not None and month is not None:
-        period = {"year": year, "month": month}
+    # Period: month is optional; absence == whole year
+    period: dict = {}
+    if year is not None:
+        period["year"] = year
+        if month is not None:
+            period["month"] = month
 
-    # Convert compare_by/group_by to Cyrillic for exclusion from filters
     compare_by_cyrillic = key_to_dim(args.get("compare_by", "")) if mode == "compare" else ""
     group_by_cyrillic = key_to_dim(group_by_latin) if group_by_latin else ""
 
-    # Convert Latin filter keys → 1C dimension names
     skip_keys = {
         "mode", "resource", "year", "month", "group_by", "order", "order_by",
         "limit", "compare_by", "compare_values",
     }
-    filters = {}
+
+    def _coerce_filter_value(value) -> list | None:
+        """Normalize a filter value to a list of strings, or None to drop it."""
+        if value is None:
+            return None
+        if isinstance(value, list):
+            cleaned = [str(v) for v in value if v is not None and str(v) != ""]
+            return cleaned or None
+        s = str(value)
+        return [s] if s else None
+
+    filters: dict = {}
     for k, v in args.items():
-        if k in skip_keys or v is None:
+        if k in skip_keys:
             continue
         dim_name = key_to_dim(k)
-        # Exclude dimension used for group_by or compare_by from filters
         if dim_name == group_by_cyrillic:
             continue
         if dim_name == compare_by_cyrillic:
             continue
-        filters[dim_name] = v
+        coerced = _coerce_filter_value(v)
+        if coerced is None:
+            continue
+        filters[dim_name] = coerced
 
-    # Apply defaults for required dimensions not provided
+    # Apply defaults for dimensions not provided (defaults go in as arrays too)
     for dim in register_metadata.get("dimensions", []):
         name = dim["name"]
         if dim.get("filter_type") in ("year_month", "range"):
             continue
-        # Don't default group_by or compare_by dimension
         if name == group_by_cyrillic or name == compare_by_cyrillic:
             continue
         if name not in filters and dim.get("default_value"):
-            filters[name] = dim["default_value"]
+            filters[name] = [str(dim["default_value"])]
 
-    # group_by: convert Latin key to 1C name
-    group_by = []
+    group_by: list = []
     if group_by_latin:
         group_by = [group_by_cyrillic]
 
-    # Mode-specific params
-    extra = {}
+    extra: dict = {}
     if mode == "compare":
         extra["compare_by"] = compare_by_cyrillic
         extra["values"] = args.get("compare_values", [])
 
-    # Determine needs_clarification
+    # needs_clarification: only year matters for period (month is optional)
     needs_clarification = False
     for dim in register_metadata.get("dimensions", []):
         name = dim["name"]

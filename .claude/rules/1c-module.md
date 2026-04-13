@@ -23,9 +23,16 @@ Common 1C compilation errors to avoid when writing BSL code:
 
 ## РегистрСведений vs РегистрНакопления
 
-- `РегистрСведений` has `Реквизиты` and `Измерения`, NOT `Ресурсы`.
-- `РегистрНакопления` has `Ресурсы`.
-- Check resource in: `МетаРегистр.Реквизиты.Найти(name)`, not `Ресурсы`.
+- `РегистрСведений` has `Измерения`, `Ресурсы`, and `Реквизиты` (all three).
+- `РегистрНакопления` has `Измерения` and `Ресурсы`.
+- Validate a resource by checking BOTH `Ресурсы` and `Реквизиты` — depending
+  on how the register was designed, numeric fields like `Сумма` may live in
+  either collection:
+
+  ```bsl
+  Найден = МетаРегистр.Ресурсы.Найти(Имя) <> Неопределено
+        ИЛИ МетаРегистр.Реквизиты.Найти(Имя) <> Неопределено;
+  ```
 
 ## Security: Operators
 

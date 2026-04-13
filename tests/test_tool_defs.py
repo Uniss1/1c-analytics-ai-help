@@ -131,7 +131,8 @@ def test_required_minimal(register_meta):
     assert "mode" in required
     assert "resource" in required
     assert "year" in required
-    assert "month" in required
+    # month is optional — absence means whole year
+    assert "month" not in required
     # Filters should NOT be required — Python applies defaults
     assert "scenario" not in required
     assert "company" not in required
@@ -162,6 +163,37 @@ def test_system_message_examples_use_register_enum_values(register_meta):
     assert "Выручка" in msg  # metric's first allowed
     # compare_values should use first two scenario values
     assert '"Факт"' in msg and '"Прогноз"' in msg
+
+
+def test_filter_dims_are_arrays(register_meta):
+    """Filter dimensions with allowed_values must be arrays of enum strings."""
+    tools = build_tools(register_meta)
+    props = tools[0]["function"]["parameters"]["properties"]
+    for key in ("scenario", "metric", "company", "contour"):
+        assert props[key]["type"] == "array", f"{key} must be array"
+        items = props[key]["items"]
+        assert items["type"] == "string"
+        assert "enum" in items
+    # Scenario enum values preserved on items.enum
+    assert set(props["scenario"]["items"]["enum"]) == {"Факт", "Прогноз", "План"}
+
+
+def test_filter_dim_without_allowed_values_is_array_without_enum():
+    """A filter dim with no allowed_values is still array<string>, no enum."""
+    meta = {
+        "name": "РегистрСведений.Тест",
+        "dimensions": [
+            {"name": "Показатель", "filter_type": "=", "required": True,
+             "allowed_values": []},
+        ],
+        "resources": [{"name": "Сумма"}],
+    }
+    from api.tool_defs import build_tools
+    tools = build_tools(meta)
+    props = tools[0]["function"]["parameters"]["properties"]
+    assert props["metric"]["type"] == "array"
+    assert props["metric"]["items"]["type"] == "string"
+    assert "enum" not in props["metric"]["items"]
 
 
 def test_system_message_adapts_to_different_register():

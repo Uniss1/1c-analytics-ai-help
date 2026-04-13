@@ -28,6 +28,10 @@ def is_technical_dim(dim: dict) -> bool:
 def _filter_properties(register_metadata: dict) -> tuple[dict, list[str]]:
     """Build JSON Schema properties for filter dimensions.
 
+    Filter values are always arrays of strings. Small models sometimes emit
+    scalars — tool_caller normalizes those to single-element arrays before
+    validation.
+
     Returns (properties_dict, required_keys).
     Skips dimensions marked as technical in metadata.
     Falls back to hardcoded list if annotations are missing (backwards compat).
@@ -52,23 +56,25 @@ def _filter_properties(register_metadata: dict) -> tuple[dict, list[str]]:
         allowed = dim.get("allowed_values", [])
         default = dim.get("default_value")
 
-        prop: dict = {"type": "string"}
+        item_schema: dict = {"type": "string"}
+        if allowed:
+            item_schema["enum"] = [str(v) for v in allowed]
 
-        # Use description_en from metadata if available
         if dim.get("description_en"):
             desc = dim["description_en"]
         else:
             desc = f"Dimension '{name}'"
             if dim.get("description"):
                 desc += f". {dim['description']}"
+        desc += ". Always pass as array, even for one value."
         if default:
-            desc += f". Default: {default}"
+            desc += f" Default: {default}."
 
-        if allowed:
-            prop["enum"] = [str(v) for v in allowed]
-
-        prop["description"] = desc
-        props[key] = prop
+        props[key] = {
+            "type": "array",
+            "items": item_schema,
+            "description": desc,
+        }
 
     return props, required
 
@@ -170,7 +176,10 @@ def build_tools(register_metadata: dict) -> list[dict]:
         },
         "month": {
             "type": "integer",
-            "description": "Month from the question (1-12). E.g. 'март' = 3",
+            "description": (
+                "Month 1-12 (e.g. 'март' = 3). "
+                "Omit entirely for whole-year queries ('за 2024 год')."
+            ),
         },
         "group_by": {
             "type": "string",
@@ -199,7 +208,7 @@ def build_tools(register_metadata: dict) -> list[dict]:
         },
     }
 
-    required = ["mode", "resource", "year", "month"]
+    required = ["mode", "resource", "year"]
 
     tool_query = {
         "type": "function",
